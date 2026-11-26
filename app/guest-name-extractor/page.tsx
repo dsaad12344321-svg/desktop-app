@@ -543,6 +543,58 @@ function extractPeople(text: string, searchTerm: string, company = "") {
     );
   }
 
+  // SUN International Outlook attachment: HOTEL C/IN LIST.
+  // Voucher identifies a booking; following titled rows without a repeated
+  // Voucher belong to it until another booking code appears.
+  const isSunCheckInList = /\bHOTEL\s+C\/IN\s+LIST\b/i.test(text)
+    && /\bVoucher\b/i.test(text)
+    && /\bSurname,\s*Name\b/i.test(text)
+    && /\bAge\/B\.Date\b/i.test(text);
+  if (isSunCheckInList) {
+    type SunCheckInGroup = { voucher: string; people: { name: string; dob: string }[] };
+    const groups: SunCheckInGroup[] = [];
+    const groupsByVoucher = new Map<string, SunCheckInGroup>();
+    let current: SunCheckInGroup | null = null;
+    const titlePattern = /\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF)\.?\s+(.+?)(?=\s+ARR\+?\b|\s+(?:SINGLE|DOUBLE|TRIPLE|QUAD)\s+ROOM\b|$)/i;
+
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.replace(/\s+/g, " ").trim();
+      if (!line) continue;
+      const guestMatch = titlePattern.exec(line);
+      if (!guestMatch) continue;
+      const beforeGuest = line.slice(0, guestMatch.index);
+      const voucherMatch = beforeGuest.match(/\b([A-Z0-9]{5,10})\s+\d+\s*$/i)
+        || beforeGuest.match(/\b([A-Z0-9]{5,10})\b/i);
+      if (voucherMatch) {
+        const voucher = voucherMatch[1].toUpperCase();
+        current = groupsByVoucher.get(voucher) || { voucher, people: [] };
+        if (!groupsByVoucher.has(voucher)) { groupsByVoucher.set(voucher, current); groups.push(current); }
+      }
+      if (!current) continue;
+      const rawName = guestMatch[2]
+        .replace(/\s+(?:ARR\+?|NEW|CHANGED)\b.*$/i, "")
+        .replace(/\s+(?:SINGLE|DOUBLE|TRIPLE|QUAD)\s+ROOM\b.*$/i, "")
+        .replace(/\s+/g, " ").replace(/^[,\s]+|[,\s]+$/g, "").replace(/,/g, " ").trim();
+      if (!rawName || /^(?:SURNAME NAME|NAME|AGE)$/i.test(rawName)) continue;
+      const dobMatch = line.match(/\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b/);
+      current.people.push({ name: titleCaseName(rawName), dob: dobMatch ? dobMatch[1].replace(/[/-]/g, ".") : "لم يُعثر عليه" });
+    }
+
+    const normalizedQuery = normalize(searchTerm);
+    if (!normalizedQuery) return groups.flatMap((group) => group.people);
+    const compactQuery = normalizedQuery.replace(/\s+/g, "");
+    if (/^[a-z0-9]{5,10}$/i.test(compactQuery)) {
+      const match = groups.find((group) => group.voucher.toLowerCase() === compactQuery.toLowerCase());
+      return match?.people || [];
+    }
+    const matchingGroups = groups.filter((group) => group.people.some((person) => {
+      const name = normalize(person.name);
+      const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
+      return name.includes(normalizedQuery) || (tokens.length > 0 && tokens.every((token) => name.split(/\s+/).some((part) => part.includes(token))));
+    }));
+    return matchingGroups.flatMap((group) => group.people);
+  }
+
   const clean = text.replace(/[\t|]+/g, " ").replace(/\s+/g, " ").trim();
 
   // Red Sea Tours Outlook bookings: each booking block contains guest names
@@ -1131,18 +1183,37 @@ export default function GuestNameExtractorPage() {
         || normalize(item.confirmationNo).replace(/\\s+/g, "") === compact
         || (/[\\p{L}]/u.test(term) && normalize(item.name).includes(normalize(term)))
       ) || null;
-      const file = arrival
-        ? files.find((candidate) => candidate.pages.some((page) =>
-            arrivalNameMatchesText(arrival.name, [candidate.name, candidate.path, candidate.company, page].join(" ")))) || null
-        : files.find((candidate) => candidate.pages.some((page) =>
-            matchesSearchText([candidate.name, candidate.path, candidate.company, page].join(" "), term))) || null;
+      const matchingFiles = arrival
+        ? files.filter((candidate) => candidate.pages.some((page) =>
+            arrivalNameMatchesText(arrival.name, [candidate.name, candidate.path, candidate.company, page].join(" "))))
+        : files.filter((candidate) => candidate.pages.some((page) =>
+            matchesSearchText([candidate.name, candidate.path, candidate.company, page].join(" "), term)));
+      const isSunFile = (candidate: IndexedFile) =>
+        normalize(candidate.company) === "sun" || /sun\s+international/i.test(candidate.content + " " + candidate.pages.join(" "));
+      const sunFiles = matchingFiles.filter(isSunFile);
+      const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
+        const priority = (candidate: IndexedFile) => {
+          if (candidate.extension !== "pdf") return candidate.extension === "msg" ? 3 : 4;
+          const filename = candidate.name.toLowerCase();
+          if (/^hotel2sejour\.pdf$/i.test(filename) || /^final\.pdf$/i.test(filename)
+            || /^reservations(?:\s*\(\d+\))?\.pdf$/i.test(filename)) return 0;
+          if (/^\d+\.pdf$/i.test(filename)) return 1;
+          return 2;
+        };
+        return priority(left) - priority(right);
+      });
+      const file = prioritizedSunFiles[0] || matchingFiles[0] || null;
       const source = file ? (/alltour/i.test(file.company)
         ? file.pages.join("\\n\\n--- ALLTOUR PAGE BREAK ---\\n\\n")
         : file.pages.join("\\n\\n")) : "";
       const people = file ? extractPeopleFromIndexedFile(file, arrival?.name || term) : [];
-      const uniquePeople = people.filter((person, personIndex, all) =>
-        all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
-          && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
+      // Preserve repeated SUN guest rows; keep existing de-duplication for other companies.
+      const uniquePeople = file && (normalize(file.company) === "sun"
+        || /sun\s+international/i.test(file.content + " " + file.pages.join(" ")))
+        ? people
+        : people.filter((person, personIndex, all) =>
+            all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
+              && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
       return { key: index + "-" + compact, term, arrival, file, people: uniquePeople };
     });
   }, [query, arrivals, files]);
