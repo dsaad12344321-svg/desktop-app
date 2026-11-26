@@ -775,6 +775,18 @@ export default function GuestNameExtractorPage() {
   const [arrivalFrom, setArrivalFrom] = useState("");
   const [arrivalTo, setArrivalTo] = useState("");
   const [greenCards, setGreenCards] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("guest-extractor-green-cards-v1") || "[]");
+      if (Array.isArray(saved)) setGreenCards(saved.filter((item): item is string => typeof item === "string"));
+    } catch { /* ignore invalid saved card colors */ }
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("guest-extractor-green-cards-v1", JSON.stringify(greenCards)); }
+    catch { /* ignore unavailable local storage */ }
+  }, [greenCards]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [error, setError] = useState("");
