@@ -851,8 +851,11 @@ export default function GuestNameExtractorPage() {
 
   useEffect(() => {
     if (!isDesktop || !nativeFolderPath || !window.desktopBridge) return;
+    // Folder watcher notifications must never trigger a full re-index.
+    // Searching is always performed against the in-memory index loaded once
+    // when the app opens. The user can explicitly refresh if files changed.
     const unsubscribe = window.desktopBridge.onFolderChanged(() => {
-      void scanNativeFolder(nativeFolderPath);
+      setStorageMessage("تم رصد تغيير في مجلد الحجوزات. نتائج البحث الحالية تستخدم الفهرس المحمّل؛ اضغط «فحص التحديثات» فقط إذا أردت إعادة الفهرسة.");
     });
     return () => {
       unsubscribe();
