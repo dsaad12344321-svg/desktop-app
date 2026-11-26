@@ -768,6 +768,42 @@ function extractPeople(text: string, searchTerm: string, company = "") {
   }));
 }
 
+
+/**
+ * Universal Outlook fallback:
+ * 1) Parse the email body first.
+ * 2) If it contains no guest records, parse all indexed attachment pages.
+ * 3) If a company parser needs page-local context, try each attachment page.
+ * This deliberately reuses the existing company parsers without changing
+ * their rules or affecting standalone documents.
+ */
+function extractPeopleFromIndexedFile(file: Pick<IndexedFile, "extension" | "pages" | "content" | "company">, searchTerm: string) {
+  const isMsg = file.extension.toLowerCase() === "msg";
+  if (!isMsg) {
+    const source = /alltour/i.test(file.company)
+      ? file.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
+      : file.pages.join("\n\n");
+    return extractPeople(source || file.content || "", searchTerm, file.company);
+  }
+
+  const emailBody = file.pages[0] || file.content || "";
+  const fromEmail = extractPeople(emailBody, searchTerm, file.company);
+  if (fromEmail.length) return fromEmail;
+
+  const attachmentPages = file.pages.slice(1).filter((page) => page.trim());
+  if (!attachmentPages.length) return [];
+
+  const attachmentText = /alltour/i.test(file.company)
+    ? attachmentPages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
+    : attachmentPages.join("\n\n");
+  const fromAllAttachments = extractPeople(attachmentText, searchTerm, file.company);
+  if (fromAllAttachments.length) return fromAllAttachments;
+
+  // Last fallback: some voucher layouts are page-oriented and should not
+  // accidentally combine rows from separate attachments/pages.
+  return attachmentPages.flatMap((page) => extractPeople(page, searchTerm, file.company));
+}
+
 export default function GuestNameExtractorPage() {
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [query, setQuery] = useState("");
@@ -938,7 +974,7 @@ export default function GuestNameExtractorPage() {
       const source = file ? (/alltour/i.test(file.company)
         ? file.pages.join("\\n\\n--- ALLTOUR PAGE BREAK ---\\n\\n")
         : file.pages.join("\\n\\n")) : "";
-      const people = file ? extractPeople(source || file.content || "", arrival?.name || term, file.company) : [];
+      const people = file ? extractPeopleFromIndexedFile(file, arrival?.name || term) : [];
       const uniquePeople = people.filter((person, personIndex, all) =>
         all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
           && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
@@ -979,8 +1015,8 @@ export default function GuestNameExtractorPage() {
 
   const effectivePeopleQuery = arrivalSearchQuery || query;
   const extractedPeople = useMemo(
-    () => extractPeople(peopleSourceText, effectivePeopleQuery, selected?.company || ""),
-    [peopleSourceText, effectivePeopleQuery, selected?.company],
+    () => selected ? extractPeopleFromIndexedFile(selected, effectivePeopleQuery) : [],
+    [selected, effectivePeopleQuery],
   );
 
   async function uploadArrivalReport(selectedFiles: FileList | null) {
@@ -1666,7 +1702,7 @@ export default function GuestNameExtractorPage() {
                 const peopleSource = /alltour/i.test(item.company)
                   ? item.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
                   : item.pages.join("\n\n");
-                const guests = extractPeople(peopleSource || item.content || "", effectivePeopleQuery, item.company);
+                const guests = extractPeopleFromIndexedFile(item, effectivePeopleQuery);
                 const uniqueGuests = guests.filter((person, index, all) =>
                   all.findIndex((candidate) =>
                     normalize(candidate.name) === normalize(person.name)
