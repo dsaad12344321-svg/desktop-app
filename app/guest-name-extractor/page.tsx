@@ -1077,6 +1077,7 @@ export default function GuestNameExtractorPage() {
     const failed: string[] = [];
     try {
       const entries = await window.desktopBridge.listFolderFiles(rootPath);
+      const watchEnabled = await window.desktopBridge.watchFolder(rootPath);
       setProgress({ done: 0, total: entries.length });
       for (let index = 0; index < entries.length; index++) {
         const entry = entries[index];
@@ -1104,7 +1105,7 @@ export default function GuestNameExtractorPage() {
       }
       setFiles(indexed);
       setWarnings(failed);
-      setStorageMessage(`تم فهرسة ${indexed.length.toLocaleString("en-US")} ملف من المجلد الأصلي مباشرة. لن يتم نسخ الملفات إلى ذاكرة المتصفح.`);
+      setStorageMessage(`تم فهرسة ${indexed.length.toLocaleString("en-US")} ملف من المجلد الأصلي مباشرة. ${watchEnabled ? "مراقبة التغييرات والإضافات الجديدة مفعّلة." : "تعذر تفعيل المراقبة التلقائية؛ استخدم زر فحص التحديثات عند إضافة ملفات."} لن يتم نسخ الملفات إلى ذاكرة المتصفح.`);
       if (!entries.length) setError("لم أجد ملفات مدعومة داخل المجلد المحدد.");
       else if (!indexed.length) setError("تعذرت قراءة الملفات. تحقق من صلاحيات المجلد أو سلامة الملفات.");
       else if (entries.length >= 20000) setError("تم الوصول إلى حد الفهرسة البالغ 20,000 ملف. اختر مجلداً فرعياً لتقليل نطاق البحث.");
@@ -1601,7 +1602,10 @@ export default function GuestNameExtractorPage() {
                 <strong>{item.name}</strong>
                 <p className="muted">الشركة: {item.company}{item.month ? ` · الشهر: ${item.month}` : ""}{item.day ? ` · اليوم: ${item.day}` : ""} · النوع: {item.extension.toUpperCase()} · الحجم: {formatSize(item.size)}</p>
                 <p className="muted">الصفحات المطابقة: {item.matchedPages.join(", ")}</p>
-              </div><button type="button" className="add-button" onClick={() => openPreview(item)}>معاينة واستخراج</button></div>
+              </div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(item.path)}>مكان الملف</button>}
+                <button type="button" className="add-button" onClick={() => openPreview(item)}>معاينة واستخراج</button>
+              </div></div>
               <p className="folder-path" dir="ltr">{item.path}</p>
               {(() => {
                 // Preview extracted guests for every company using the same
