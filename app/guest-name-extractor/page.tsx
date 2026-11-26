@@ -427,7 +427,7 @@ function extractTravelWaysPeople(text: string, searchTerm: string) {
   return matchingGroups.flatMap((group) => group.people);
 }
 
-function extractPeople(text: string, searchTerm: string, company = "") {
+function extractPeople(text: string, searchTerm: string, company = "", enableSunCheckInList = false) {
   company = detectVoucherCompany(text, company);
   const isTravelWaysReport = /travel\s*ways/i.test(company)
     || (/HOTEL\s+CONTRACT\s+EBD\s+LIST/i.test(text)
@@ -550,7 +550,7 @@ function extractPeople(text: string, searchTerm: string, company = "") {
     && /\bVoucher\b/i.test(text)
     && /\bSurname,\s*Name\b/i.test(text)
     && /\bAge\/B\.Date\b/i.test(text);
-  if (isSunCheckInList) {
+  if (isSunCheckInList && enableSunCheckInList) {
     type SunCheckInGroup = { voucher: string; people: { name: string; dob: string }[] };
     const groups: SunCheckInGroup[] = [];
     const groupsByVoucher = new Map<string, SunCheckInGroup>();
@@ -996,17 +996,17 @@ function extractPeople(text: string, searchTerm: string, company = "") {
  * This deliberately reuses the existing company parsers without changing
  * their rules or affecting standalone documents.
  */
-function extractPeopleFromIndexedFile(file: Pick<IndexedFile, "extension" | "pages" | "content" | "company">, searchTerm: string) {
+function extractPeopleFromIndexedFile(file: Pick<IndexedFile, "extension" | "pages" | "content" | "company">, searchTerm: string, enableSunCheckInList = false) {
   const isMsg = file.extension.toLowerCase() === "msg";
   if (!isMsg) {
     const source = /alltour/i.test(file.company)
       ? file.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
       : file.pages.join("\n\n");
-    return extractPeople(source || file.content || "", searchTerm, file.company);
+    return extractPeople(source || file.content || "", searchTerm, file.company, enableSunCheckInList);
   }
 
   const emailBody = file.pages[0] || file.content || "";
-  const fromEmail = extractPeople(emailBody, searchTerm, file.company);
+  const fromEmail = extractPeople(emailBody, searchTerm, file.company, enableSunCheckInList);
   if (fromEmail.length) return fromEmail;
 
   const attachmentPages = file.pages.slice(1).filter((page) => page.trim());
@@ -1015,12 +1015,12 @@ function extractPeopleFromIndexedFile(file: Pick<IndexedFile, "extension" | "pag
   const attachmentText = /alltour/i.test(file.company)
     ? attachmentPages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
     : attachmentPages.join("\n\n");
-  const fromAllAttachments = extractPeople(attachmentText, searchTerm, file.company);
+  const fromAllAttachments = extractPeople(attachmentText, searchTerm, file.company, enableSunCheckInList);
   if (fromAllAttachments.length) return fromAllAttachments;
 
   // Last fallback: some voucher layouts are page-oriented and should not
   // accidentally combine rows from separate attachments/pages.
-  return attachmentPages.flatMap((page) => extractPeople(page, searchTerm, file.company));
+  return attachmentPages.flatMap((page) => extractPeople(page, searchTerm, file.company, enableSunCheckInList));
 }
 
 export default function GuestNameExtractorPage() {
@@ -1208,7 +1208,7 @@ export default function GuestNameExtractorPage() {
       const source = file ? (/alltour/i.test(file.company)
         ? file.pages.join("\\n\\n--- ALLTOUR PAGE BREAK ---\\n\\n")
         : file.pages.join("\\n\\n")) : "";
-      const people = file ? extractPeopleFromIndexedFile(file, arrival?.name || term) : [];
+      const people = file ? extractPeopleFromIndexedFile(file, arrival?.name || term, true) : [];
       // Preserve repeated SUN guest rows; keep existing de-duplication for other companies.
       const uniquePeople = file && (normalize(file.company) === "sun"
         || /sun\s+international/i.test(file.content + " " + file.pages.join(" ")))
