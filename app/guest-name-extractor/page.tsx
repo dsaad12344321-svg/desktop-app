@@ -112,6 +112,7 @@ async function extractArrivalReport(file: File): Promise<ArrivalRecord[]> {
   return Array.from(unique.values());
 }
 
+const NATIVE_FOLDER_KEY = "long-beach-native-reservation-folder-v1";
 const GUEST_DB_NAME = "nationality-guest-files";
 const GUEST_DB_VERSION = 1;
 const GUEST_STORE_NAME = "files";
@@ -792,6 +793,7 @@ export default function GuestNameExtractorPage() {
   const [error, setError] = useState("");
   const [warnings, setWarnings] = useState<string[]>([]);
   const [folderName, setFolderName] = useState("");
+  const [nativeFolderPath, setNativeFolderPath] = useState("");
   const [selected, setSelected] = useState<SearchResult | null>(null);
   const [msgPreview, setMsgPreview] = useState<MsgPreviewData | null>(null);
   const [msgPreviewError, setMsgPreviewError] = useState("");
@@ -854,6 +856,7 @@ export default function GuestNameExtractorPage() {
           try { await saveGuestFiles(savedFiles); } catch { /* Keep the readable session data even if migration cannot be persisted. */ }
         }
         const savedState = savedStateText ? JSON.parse(savedStateText) : {};
+        const savedNativePath = window.desktopBridge ? localStorage.getItem(NATIVE_FOLDER_KEY) || "" : "";
         setFiles(savedFiles);
         const savedArrivals = localStorage.getItem(ARRIVAL_REPORT_KEY);
         if (savedArrivals) {
@@ -879,9 +882,13 @@ export default function GuestNameExtractorPage() {
             setCurrentPage(Math.min(savedPage, Math.max(1, item.pages.length)));
           }
         }
-        setStorageMessage(savedFiles.length
-          ? `تم استعادة ${savedFiles.length.toLocaleString("en-US")} ملف من ذاكرة المتصفح.`
-          : "لا يوجد مجلد محفوظ حاليًا. اختر مجلد الحجوزات للبدء.");
+        setNativeFolderPath(savedNativePath);
+        setStorageMessage(savedNativePath
+          ? "تم استعادة مسار مجلد الحجوزات. جارٍ إعادة فهرسة الملفات من مكانها الأصلي..."
+          : savedFiles.length
+            ? `تم استعادة ${savedFiles.length.toLocaleString("en-US")} ملف من ذاكرة المتصفح.`
+            : "لا يوجد مجلد محفوظ حاليًا. اختر مجلد الحجوزات للبدء.");
+        if (savedNativePath && window.desktopBridge) void scanNativeFolder(savedNativePath);
       } catch {
         if (active) setStorageMessage("تعذرت استعادة المجلد المحفوظ. قد تكون بيانات الموقع قد مُسحت أو مساحة التخزين غير متاحة.");
       } finally {
@@ -1039,6 +1046,71 @@ export default function GuestNameExtractorPage() {
     setFiles(indexed); setWarnings(failed); setBusy(false);
     if (!readable.length) setError("لم أجد ملفات مدعومة داخل المجلد. الملفات المدعومة: PDF وWord DOCX وOutlook MSG وTXT وCSV وXML.");
     else if (!indexed.length) setError("تعذرت قراءة الملفات المحددة. تحقق من سلامة الملفات ثم حاول مرة أخرى.");
+  }
+
+
+  async function chooseNativeFolder() {
+    if (!window.desktopBridge) {
+      inputRef.current?.click();
+      return;
+    }
+    try {
+      const selectedPath = await window.desktopBridge.selectFolder();
+      if (selectedPath) await scanNativeFolder(selectedPath);
+    } catch (scanError) {
+      setError(scanError instanceof Error ? scanError.message : "تعذر الوصول إلى المجلد المحدد.");
+    }
+  }
+
+  async function scanNativeFolder(rootPath: string) {
+    if (!window.desktopBridge) return;
+    setBusy(true); setError(""); setWarnings([]); setFiles([]); setQuery(""); setSelected(null);
+    setNativeFolderPath(rootPath);
+    setFolderName(rootPath);
+    localStorage.setItem(NATIVE_FOLDER_KEY, rootPath);
+    setStorageMessage("جارٍ فهرسة الملفات مباشرة من مجلد Windows دون رفعها أو نسخها إلى ذاكرة المتصفح...");
+    setProgress({ done: 0, total: 0 });
+    const indexed: IndexedFile[] = [];
+    const failed: string[] = [];
+    try {
+      const entries = await window.desktopBridge.listFolderFiles(rootPath);
+      setProgress({ done: 0, total: entries.length });
+      for (let index = 0; index < entries.length; index++) {
+        const entry = entries[index];
+        const extension = entry.name.split(".").pop()?.toLowerCase() || "";
+        try {
+          const bytes = await window.desktopBridge.readFile(rootPath, entry.path);
+          const file = new File([bytes], entry.name, { lastModified: entry.mtimeMs });
+          const extracted = await extractText(file, extension);
+          const folderMetadata = getFolderMetadata(entry.relativePath);
+          indexed.push({
+            id: entry.path + "-" + entry.mtimeMs,
+            name: entry.name,
+            path: entry.path,
+            ...folderMetadata,
+            extension,
+            size: entry.size,
+            content: extracted.content,
+            pages: extracted.pages,
+            file,
+          });
+        } catch {
+          failed.push(entry.relativePath);
+        }
+        setProgress({ done: index + 1, total: entries.length });
+      }
+      setFiles(indexed);
+      setWarnings(failed);
+      setStorageMessage(`تم فهرسة ${indexed.length.toLocaleString("en-US")} ملف من المجلد الأصلي مباشرة. لن يتم نسخ الملفات إلى ذاكرة المتصفح.`);
+      if (!entries.length) setError("لم أجد ملفات مدعومة داخل المجلد المحدد.");
+      else if (!indexed.length) setError("تعذرت قراءة الملفات. تحقق من صلاحيات المجلد أو سلامة الملفات.");
+      else if (entries.length >= 20000) setError("تم الوصول إلى حد الفهرسة البالغ 20,000 ملف. اختر مجلداً فرعياً لتقليل نطاق البحث.");
+    } catch (scanError) {
+      setError(scanError instanceof Error ? scanError.message : "تعذرت قراءة المجلد المحدد.");
+      setStorageMessage("تعذرت فهرسة المجلد. تحقق من اتصال القرص أو صلاحيات الوصول.");
+    } finally {
+      setBusy(false);
+    }
   }
 
 
@@ -1215,6 +1287,8 @@ export default function GuestNameExtractorPage() {
       setSelected(null);
       setCurrentPage(1);
       setFolderName("");
+    setNativeFolderPath("");
+    localStorage.removeItem(NATIVE_FOLDER_KEY);
       setWarnings([]);
       setStorageMessage("تم حذف المجلد المحفوظ من المتصفح.");
     } catch {
@@ -1466,10 +1540,11 @@ export default function GuestNameExtractorPage() {
       <section className="panel">
         <div className="section-heading">
           <div><h2>1. اختيار مجلد الحجوزات بالكامل</h2>
-            <p className="muted">اختر المجلد الرئيسي. تتم قراءة الملفات محلياً داخل المتصفح دون رفعها إلى الخادم.</p></div>
-          <button type="button" className="add-button" onClick={() => inputRef.current?.click()} disabled={busy}>
-            {busy ? "جارٍ فحص المجلد..." : "اختيار مجلد"}
+            <p className="muted">اربط مجلد الحجوزات الأصلي مرة واحدة. في نسخة Windows تتم قراءة الملفات مباشرة من مكانها دون رفعها أو نسخها إلى ذاكرة المتصفح.</p></div>
+          <button type="button" className="add-button" onClick={() => void chooseNativeFolder()} disabled={busy}>
+            {busy ? "جارٍ فحص المجلد..." : window.desktopBridge ? (nativeFolderPath ? "تغيير مجلد الحجوزات" : "ربط مجلد Windows") : "اختيار مجلد"}
           </button>
+          {window.desktopBridge && nativeFolderPath && <button type="button" className="add-button" onClick={() => void scanNativeFolder(nativeFolderPath)} disabled={busy}>فحص التحديثات</button>}
           {files.length > 0 && <button type="button" className="add-button" onClick={() => void removeSavedFolder()} disabled={busy}>حذف المجلد المحفوظ</button>}
           <button type="button" className="add-button" onClick={() => arrivalInputRef.current?.click()} disabled={arrivalBusy}>
             {arrivalBusy ? "جارٍ قراءة التقرير..." : arrivals.length ? "استبدال تقرير arr.pdf" : "رفع تقرير arr.pdf"}
@@ -1481,7 +1556,7 @@ export default function GuestNameExtractorPage() {
             {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
             onChange={(event) => { void scanFolder(event.currentTarget.files); event.currentTarget.value = ""; }} />
         </div>
-        {folderName && <div className="filename">المجلد: {folderName}</div>}
+        {folderName && <div className="filename" dir="ltr">المجلد المرتبط: {folderName}</div>}
         <p className="saved-hint" role="status">{storageMessage}</p>
         {arrivalReportName && <div className="filename">تقرير الوصول: {arrivalReportName} · {arrivals.length.toLocaleString("en-US")} حجز</div>}
         {arrivalStatus && <p className="saved-hint" role="status">{arrivalStatus}</p>}
