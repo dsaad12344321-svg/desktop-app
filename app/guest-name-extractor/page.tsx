@@ -783,18 +783,21 @@ function extractPeople(text: string, searchTerm: string, company = "") {
   }
 
   // Generic hotel rooming-list attachment fallback.
-  // Some supplier PDFs place the guest name and DOB in separate visual rows.
-  // Extract the titled name independently; attach a DOB only when it follows
-  // that same name before another guest/title or booking field begins.
-  const titledAttachmentPattern = /\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\.?\s+([\p{L}][\p{L}’'.,-]*(?:\s+[\p{L}][\p{L}’'.,-]*){1,4}?)(?:\s+(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b)?(?:\s+[A-Z]{1,3}\d{4,}\b)?(?=\s+(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\b|\s+\d{1,2}:\d{2}\b|\s+passport\b|$)/giu;
+  // Parse each titled guest row with its booking reference and arrival time.
+  // When a searched guest is found, return every guest sharing that exact
+  // booking reference (and time when available), not guests from adjacent
+  // reservations in the same PDF.
+  const titledAttachmentPattern = /\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\.?\s+([\p{L}][\p{L}’'.,-]*(?:\s+[\p{L}][\p{L}’'.,-]*){1,4}?)(?:\s+(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b)?(?:\s+([A-Z]{1,3}\d{4,}))?(?:\s+(\d{1,2}:\d{2}))?(?=\s+(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\b|$)/giu;
   const titledAttachmentPeople = Array.from(clean.matchAll(titledAttachmentPattern), (match) => ({
     name: titleCaseName(match[2].replace(/[,]+/g, " ").trim()),
     dob: match[3] ? match[3].replace(/[/-]/g, ".") : "",
+    bookingRef: (match[4] || "").toUpperCase(),
+    arrivalTime: match[5] || "",
   })).filter((person) => person.name && !/^(?:DOUBLE ROOM|STANDARD|PREMIUM)$/i.test(person.name));
   if (titledAttachmentPeople.length) {
     const normalizedSearch = normalize(searchTerm);
     if (!normalizedSearch || /^\d{3,9}$/.test(normalizedSearch.replace(/\s+/g, ""))) {
-      return titledAttachmentPeople;
+      return titledAttachmentPeople.map(({ name, dob }) => ({ name, dob }));
     }
     const tokens = normalizedSearch.split(/\s+/)
       .filter((token) => !/^(?:mr|mrs|ms|miss|mstr|master|chd|chld)$/.test(token));
@@ -803,7 +806,17 @@ function extractPeople(text: string, searchTerm: string, company = "") {
       return normalize(person.name).includes(normalizedSearch)
         || (tokens.length > 0 && tokens.every((token) => parts.some((part) => part.includes(token))));
     });
-    if (matchingPeople.length) return matchingPeople;
+    if (matchingPeople.length) {
+      const matchedBooking = matchingPeople.find((person) => person.bookingRef);
+      if (matchedBooking?.bookingRef) {
+        return titledAttachmentPeople
+          .filter((person) => person.bookingRef === matchedBooking.bookingRef
+            && (!matchedBooking.arrivalTime || !person.arrivalTime
+              || person.arrivalTime === matchedBooking.arrivalTime))
+          .map(({ name, dob }) => ({ name, dob }));
+      }
+      return matchingPeople.map(({ name, dob }) => ({ name, dob }));
+    }
   }
 
   const datePattern = "(?:\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4}|\\d{4}[\\/-]\\d{1,2}[\\/-]\\d{1,2}|\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4})";
