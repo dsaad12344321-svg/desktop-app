@@ -771,6 +771,22 @@ function extractPeople(text: string, searchTerm: string, company = "") {
 export default function GuestNameExtractorPage() {
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [query, setQuery] = useState("");
+  const [viewMode, setViewMode] = useState<"single" | "multiple">("single");
+  const [arrivalFrom, setArrivalFrom] = useState("");
+  const [arrivalTo, setArrivalTo] = useState("");
+  const [greenCards, setGreenCards] = useState<string[]>([]);
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("guest-extractor-green-cards-v1") || "[]");
+      if (Array.isArray(saved)) setGreenCards(saved.filter((item): item is string => typeof item === "string"));
+    } catch { /* ignore invalid saved card colors */ }
+  }, []);
+
+  useEffect(() => {
+    try { localStorage.setItem("guest-extractor-green-cards-v1", JSON.stringify(greenCards)); }
+    catch { /* ignore unavailable local storage */ }
+  }, [greenCards]);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ done: 0, total: 0 });
   const [error, setError] = useState("");
@@ -897,6 +913,38 @@ export default function GuestNameExtractorPage() {
       || normalize(item.name).includes(normalize(query)),
     );
   }, [arrivals, query]);
+
+  const arrivalTimeMatches = useMemo(() => {
+    if (!arrivalFrom && !arrivalTo) return [];
+    return arrivals.filter((item) => (!arrivalFrom || item.arrivalTime >= arrivalFrom)
+      && (!arrivalTo || item.arrivalTime <= arrivalTo))
+      .sort((x, y) => x.arrivalTime.localeCompare(y.arrivalTime));
+  }, [arrivals, arrivalFrom, arrivalTo]);
+
+  const multipleCards = useMemo(() => {
+    const terms = query.split(/[，,;؛\\n]+/).map((part) => part.trim()).filter(Boolean);
+    return terms.map((term, index) => {
+      const compact = normalize(term).replace(/\\s+/g, "");
+      const arrival = arrivals.find((item) =>
+        normalize(item.roomNo).replace(/\\s+/g, "") === compact
+        || normalize(item.confirmationNo).replace(/\\s+/g, "") === compact
+        || (/[\\p{L}]/u.test(term) && normalize(item.name).includes(normalize(term)))
+      ) || null;
+      const file = arrival
+        ? files.find((candidate) => candidate.pages.some((page) =>
+            arrivalNameMatchesText(arrival.name, [candidate.name, candidate.path, candidate.company, page].join(" ")))) || null
+        : files.find((candidate) => candidate.pages.some((page) =>
+            matchesSearchText([candidate.name, candidate.path, candidate.company, page].join(" "), term))) || null;
+      const source = file ? (/alltour/i.test(file.company)
+        ? file.pages.join("\\n\\n--- ALLTOUR PAGE BREAK ---\\n\\n")
+        : file.pages.join("\\n\\n")) : "";
+      const people = file ? extractPeople(source || file.content || "", arrival?.name || term, file.company) : [];
+      const uniquePeople = people.filter((person, personIndex, all) =>
+        all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
+          && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
+      return { key: index + "-" + compact, term, arrival, file, people: uniquePeople };
+    });
+  }, [query, arrivals, files]);
 
   const companies = useMemo(() => new Set(files.map((file) => file.company).filter((name) => name !== "غير محددة")).size, [files]);
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files]);
@@ -1511,6 +1559,76 @@ export default function GuestNameExtractorPage() {
 
       {files.length > 0 && <>
         <section className="panel">
+          <div className="section-heading" style={{ marginBottom: 12 }}>
+            <h2 style={{ margin: 0 }}>وضع العرض</h2>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button type="button" className="add-button" aria-pressed={viewMode === "single"} onClick={() => setViewMode("single")}
+                style={viewMode === "single" ? { background: "#1769aa", color: "#fff" } : undefined}>Single View</button>
+              <button type="button" className="add-button" aria-pressed={viewMode === "multiple"} onClick={() => setViewMode("multiple")}
+                style={viewMode === "multiple" ? { background: "#1769aa", color: "#fff" } : undefined}>Multiple View</button>
+            </div>
+          </div>
+          <h2>فلتر مواعيد الوصول من / إلى</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10 }}>
+            <label style={{ display: "grid", gap: 5 }}>من
+              <input type="time" value={arrivalFrom} onChange={(event) => setArrivalFrom(event.target.value)}
+                style={{ minHeight: 40, border: "1px solid #cbd6e2", borderRadius: 8, padding: 8 }} />
+            </label>
+            <label style={{ display: "grid", gap: 5 }}>إلى
+              <input type="time" value={arrivalTo} onChange={(event) => setArrivalTo(event.target.value)}
+                style={{ minHeight: 40, border: "1px solid #cbd6e2", borderRadius: 8, padding: 8 }} />
+            </label>
+          </div>
+          {(arrivalFrom || arrivalTo) && <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+            الغرف في هذه الفترة ({arrivalTimeMatches.length}): {arrivalTimeMatches.length
+              ? arrivalTimeMatches.map((item) => item.roomNo + " (" + item.arrivalTime + ")").join("، ")
+              : "لا توجد غرف في هذه الفترة"}
+          </div>}
+        </section>
+        {viewMode === "multiple" && <section className="panel">
+          <h2>البحث المتعدد</h2>
+          <p className="muted">اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة.</p>
+          <textarea value={query} onChange={(event) => setQuery(event.target.value)}
+            placeholder="مثال: 0115, 209682, Fazliji, 0166" aria-label="البحث في عدة غرف وحجوزات"
+            rows={3} style={{ width: "100%", border: "1px solid #cbd6e2", borderRadius: 10, padding: 12, font: "inherit", resize: "vertical" }} />
+          {query.trim() && <p className="saved-hint">عدد مربعات البحث: {multipleCards.length}</p>}
+          {multipleCards.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,390px),1fr))", gap: 12, marginTop: 14 }}>
+            {multipleCards.map((card) => {
+              const isGreen = greenCards.includes(card.key);
+              return <article key={card.key} className="folder-result" style={{
+                minWidth: 0, background: isGreen ? "#e8f5e9" : undefined,
+                border: isGreen ? "1px solid #81c784" : undefined
+              }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <strong>{card.arrival?.name || card.file?.name || card.term}</strong>
+                  <button type="button" className="add-button" onClick={() => setGreenCards((current) =>
+                    current.includes(card.key) ? current.filter((key) => key !== card.key) : [...current, card.key]
+                  )}>{isGreen ? "اللون الافتراضي" : "تمييز بالأخضر"}</button>
+                </div>
+                {card.arrival
+                  ? <p className="muted">رقم الغرفة: {card.arrival.roomNo} · الرقم التأكيدي: {card.arrival.confirmationNo} · موعد الوصول: {card.arrival.arrivalTime}</p>
+                  : <p className="muted">بحث: {card.term} · لم يتم العثور على سجل مطابق في arr.pdf</p>}
+                {card.file ? <>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "8px 0" }}>
+                    {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(card.file!.path)}>مكان الملف</button>}
+                    <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [1] })}>معاينة واستخراج</button>
+                  </div>
+                  <p className="folder-path" dir="ltr">{card.file.path}</p>
+                  <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(255,255,255,.72)", border: "1px solid #dbe4ef" }}>
+                    <strong style={{ display: "block", marginBottom: 7 }}>الأسماء المستخرجة تلقائياً: {card.people.length}</strong>
+                    {card.people.length
+                      ? <div dir="ltr" style={{ display: "grid", gap: 5, textAlign: "left" }}>
+                          {card.people.map((person, personIndex) => <span key={person.name + personIndex} style={{ fontSize: 13 }}>{person.name}{person.dob ? " - " + person.dob : ""}</span>)}
+                        </div>
+                      : <span className="muted">لم يتم استخراج أسماء من الملف تلقائياً.</span>}
+                  </div>
+                </> : <p className="empty-exclusions">لم يتم العثور على ملف حجز مطابق لهذا البحث.</p>}
+              </article>;
+            })}
+          </div>}
+        </section>}
+        {viewMode === "single" && <>
+        <section className="panel">
           <h2>2. البحث بالاسم أو الشركة أو رقم الحجز أو رقم الغرفة أو الرقم التأكيدي</h2>
           <p className="muted">بعد رفع تقرير arr.pdf يمكنك البحث برقم الغرفة أو الرقم التأكيدي؛ سيظهر اسم النزيل وميعاد وصوله والملفات التي تحتوي على اسمه.</p>
           <input value={query} onChange={(event) => setQuery(event.target.value)}
@@ -1570,6 +1688,7 @@ export default function GuestNameExtractorPage() {
             </article>
           ))}</div> : <p className="empty-exclusions">لا توجد ملفات تحتوي على كلمة البحث.</p>}
         </section>}
+        </>}
       </>}
 
       {selected && <section className="panel" aria-label="الأسماء وتواريخ الميلاد في الصفحة الحالية">
