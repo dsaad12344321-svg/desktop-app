@@ -48,6 +48,15 @@ npm run desktop:dev
 
 Electron starts the Next.js development server locally and opens the desktop window.
 
+## Easy Windows workflow (recommended)
+
+You can use the two included batch files without typing commands:
+
+- Double-click `Start-Developer-Mode.bat` to launch the app for development. It installs npm dependencies only when they are missing, then starts Electron with the Next.js development server. Changes to React/Next.js pages are picked up by Next.js Fast Refresh. After changing Electron files (`electron/main.cjs` or `electron/preload.cjs`), close the app and start Developer Mode again.
+- Double-click `Build-Production.bat` only after testing is complete. It installs dependencies if needed, creates the production build and generates the Windows installer in `release/`.
+
+Keep the project folder on the computer while using Developer Mode. Node.js 22 LTS and npm must be installed. The first dependency installation requires an internet connection; after dependencies are installed, normal development can run locally.
+
 ## Build the Windows installer
 
 ```bash
