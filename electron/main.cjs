@@ -9,6 +9,8 @@ let serverProcess = null;
 let mainWindow = null;
 let serverPort = null;
 let quitting = false;
+let folderWatcher = null;
+let folderWatchTimer = null;
 
 function log(message) {
   try {
@@ -171,6 +173,40 @@ function registerSafeDesktopApi() {
     return new Uint8Array(await fs.promises.readFile(target));
   });
 
+  ipcMain.handle("desktop:watch-folder", async (_event, rootPath) => {
+    if (folderWatcher) { folderWatcher.close(); folderWatcher = null; }
+    if (typeof rootPath !== "string" || !path.isAbsolute(rootPath)) return false;
+    const root = path.resolve(rootPath);
+    try {
+      const stat = await fs.promises.stat(root);
+      if (!stat.isDirectory()) return false;
+      folderWatcher = fs.watch(root, { recursive: true }, () => {
+        if (folderWatchTimer) clearTimeout(folderWatchTimer);
+        folderWatchTimer = setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send("desktop:folder-changed");
+          }
+        }, 1800);
+      });
+      folderWatcher.on("error", error => {
+        log("Folder watcher error: " + error.message);
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send("desktop:folder-watch-error", error.message);
+        }
+      });
+      return true;
+    } catch (error) {
+      log("Unable to watch folder: " + (error && error.message ? error.message : String(error)));
+      return false;
+    }
+  });
+
+  ipcMain.handle("desktop:unwatch-folder", () => {
+    if (folderWatcher) { folderWatcher.close(); folderWatcher = null; }
+    if (folderWatchTimer) { clearTimeout(folderWatchTimer); folderWatchTimer = null; }
+    return true;
+  });
+
   ipcMain.handle("desktop:open-path", async (_event, selectedPath) => {
     if (typeof selectedPath !== "string" || !path.isAbsolute(selectedPath) || !fs.existsSync(selectedPath)) {
       return false;
@@ -232,6 +268,8 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   quitting = true;
+  if (folderWatcher) { folderWatcher.close(); folderWatcher = null; }
+  if (folderWatchTimer) { clearTimeout(folderWatchTimer); folderWatchTimer = null; }
   if (serverProcess && !serverProcess.killed) {
     serverProcess.kill();
     serverProcess = null;
