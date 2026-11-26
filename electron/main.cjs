@@ -117,6 +117,68 @@ function registerSafeDesktopApi() {
     return result.canceled ? null : result.filePaths[0];
   });
 
+  ipcMain.handle("desktop:list-folder-files", async (_event, rootPath) => {
+    if (typeof rootPath !== "string" || !path.isAbsolute(rootPath)) throw new Error("Invalid folder path.");
+    const root = path.resolve(rootPath);
+    const rootStat = await fs.promises.stat(root);
+    if (!rootStat.isDirectory()) throw new Error("The selected path is not a folder.");
+    const allowed = new Set(["pdf", "docx", "msg", "txt", "csv", "xml", "html", "htm", "eml", "log"]);
+    const results = [];
+    const queue = [root];
+    const maxFiles = 20000;
+    while (queue.length) {
+      const current = queue.pop();
+      const entries = await fs.promises.readdir(current, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.name.startsWith("~$") || entry.name.startsWith(".")) continue;
+        const absolute = path.join(current, entry.name);
+        if (entry.isDirectory()) {
+          queue.push(absolute);
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const extension = path.extname(entry.name).slice(1).toLowerCase();
+        if (!allowed.has(extension)) continue;
+        const stat = await fs.promises.stat(absolute);
+        results.push({
+          path: absolute,
+          relativePath: path.relative(root, absolute).split(path.sep).join("/"),
+          name: entry.name,
+          size: stat.size,
+          mtimeMs: stat.mtimeMs
+        });
+        if (results.length >= maxFiles) return results;
+      }
+    }
+    return results;
+  });
+
+  ipcMain.handle("desktop:read-file", async (_event, rootPath, filePath) => {
+    if (typeof rootPath !== "string" || typeof filePath !== "string"
+      || !path.isAbsolute(rootPath) || !path.isAbsolute(filePath)) {
+      throw new Error("Invalid file path.");
+    }
+    const root = path.resolve(rootPath);
+    const target = path.resolve(filePath);
+    const relative = path.relative(root, target);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error("The requested file is outside the selected folder.");
+    }
+    const stat = await fs.promises.stat(target);
+    if (!stat.isFile() || stat.size > 80 * 1024 * 1024) {
+      throw new Error("The file is not supported or exceeds the 80 MB reading limit.");
+    }
+    return new Uint8Array(await fs.promises.readFile(target));
+  });
+
+  ipcMain.handle("desktop:open-path", async (_event, selectedPath) => {
+    if (typeof selectedPath !== "string" || !path.isAbsolute(selectedPath) || !fs.existsSync(selectedPath)) {
+      return false;
+    }
+    const result = await shell.openPath(selectedPath);
+    return result === "";
+  });
+
   ipcMain.handle("desktop:show-in-folder", async (_event, selectedPath) => {
     if (typeof selectedPath !== "string" || !path.isAbsolute(selectedPath) || !fs.existsSync(selectedPath)) {
       return false;
