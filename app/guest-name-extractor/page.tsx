@@ -786,7 +786,7 @@ function extractPeople(text: string, searchTerm: string, company = "") {
   // Some supplier PDFs place the guest name and DOB in separate visual rows.
   // Extract the titled name independently; attach a DOB only when it follows
   // that same name before another guest/title or booking field begins.
-  const titledAttachmentPattern = /\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\.?\s+([\p{L}][\p{L}’'.,-]*(?:\s+[\p{L}][\p{L}’'.,-]*){1,4}?)(?:\s+(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b)?(?=\s+(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\b|\s+\d{1,2}:\d{2}\b|\s+[A-Z]{1,3}\d{4,}\b|\s+passport\b|$)/giu;
+  const titledAttachmentPattern = /\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\.?\s+([\p{L}][\p{L}’'.,-]*(?:\s+[\p{L}][\p{L}’'.,-]*){1,4}?)(?:\s+(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b)?(?:\s+[A-Z]{1,3}\d{4,}\b)?(?=\s+(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\b|\s+\d{1,2}:\d{2}\b|\s+passport\b|$)/giu;
   const titledAttachmentPeople = Array.from(clean.matchAll(titledAttachmentPattern), (match) => ({
     name: titleCaseName(match[2].replace(/[,]+/g, " ").trim()),
     dob: match[3] ? match[3].replace(/[/-]/g, ".") : "",
