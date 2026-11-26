@@ -247,20 +247,34 @@ async function extractText(file: File, extension: string): Promise<{ content: st
     const attachmentPages: string[] = [];
     for (const attachment of attachmentRows) {
       const attachmentName = String(attachment.fileName || attachment.name || "").trim();
-      if (!attachmentName.toLowerCase().endsWith(".pdf")) continue;
+      const attachmentExtension = attachmentName.split(".").pop()?.toLowerCase() || "";
       try {
         const extractedAttachment = msgReader.getAttachment(attachment);
-        const pdfjs = await import("pdfjs-dist");
-        pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
-        const pdf = await pdfjs.getDocument({
-          data: new Uint8Array(extractedAttachment.content),
-        }).promise;
-        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-          const page = await pdf.getPage(pageNumber);
-          const pageContent = await page.getTextContent();
-          attachmentPages.push(pageContent.items
-            .map((item) => ("str" in item ? item.str : ""))
-            .join(" "));
+        const attachmentBytes = new Uint8Array(extractedAttachment.content);
+
+        if (attachmentExtension === "pdf") {
+          const pdfjs = await import("pdfjs-dist");
+          pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+          const pdf = await pdfjs.getDocument({ data: attachmentBytes }).promise;
+          for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+            const page = await pdf.getPage(pageNumber);
+            const pageContent = await page.getTextContent();
+            attachmentPages.push(pageContent.items
+              .map((item) => ("str" in item ? item.str : ""))
+              .join(" "));
+          }
+        } else if (attachmentExtension === "docx") {
+          const mammoth = await import("mammoth/mammoth.browser");
+          const result = await mammoth.extractRawText({
+            arrayBuffer: attachmentBytes.buffer.slice(
+              attachmentBytes.byteOffset,
+              attachmentBytes.byteOffset + attachmentBytes.byteLength,
+            ) as ArrayBuffer,
+          });
+          if (result.value?.trim()) attachmentPages.push(result.value);
+        } else if (["txt", "csv", "xml", "html", "htm", "eml", "log"].includes(attachmentExtension)) {
+          const text = new TextDecoder().decode(attachmentBytes);
+          if (text.trim()) attachmentPages.push(text);
         }
       } catch {
         // Keep the MSG searchable even if one attachment cannot be parsed.
