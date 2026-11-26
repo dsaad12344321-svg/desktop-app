@@ -1009,11 +1009,6 @@ export default function GuestNameExtractorPage() {
   // AllTours booking references can be found on a different page from the
   // guest table. Parse the complete MSG/PDF page set for this company so a
   // search by voucher number still displays every guest in that booking.
-  const peopleSourceText = selected
-    ? /alltour/i.test(selected.company)
-      ? selected.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
-      : selected.pages.join("\n\n")
-    : "";
   // When the search is a room or confirmation number, use the linked guest name
   // as the parser query. Passing the numeric identifier to a voucher parser can
   // make it match an unrelated number in the page and return a stray row.
@@ -1713,9 +1708,6 @@ export default function GuestNameExtractorPage() {
               {(() => {
                 // Preview extracted guests for every company using the same
                 // company-specific parser used by the document preview.
-                const peopleSource = /alltour/i.test(item.company)
-                  ? item.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
-                  : item.pages.join("\n\n");
                 const guests = extractPeopleFromIndexedFile(item, effectivePeopleQuery);
                 const uniqueGuests = guests.filter((person, index, all) =>
                   all.findIndex((candidate) =>
