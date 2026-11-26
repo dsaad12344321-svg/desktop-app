@@ -775,11 +775,12 @@ function extractPeople(text: string, searchTerm: string, company = "") {
     if (!normalizedSearch || /^\\d{3,9}$/.test(normalizedSearch.replace(/\\s+/g, ""))) {
       return titledAttachmentPeople;
     }
-    const tokens = normalizedSearch.split(/\\s+/).filter(Boolean);
+    const tokens = normalizedSearch.split(/\\s+/)
+      .filter((token) => !/^(?:mr|mrs|ms|miss|mstr|master|chd|chld)$/.test(token));
     const matchingPeople = titledAttachmentPeople.filter((person) => {
       const parts = normalize(person.name).split(/\\s+/);
       return normalize(person.name).includes(normalizedSearch)
-        || tokens.every((token) => parts.some((part) => part.includes(token)));
+        || (tokens.length > 0 && tokens.every((token) => parts.some((part) => part.includes(token))));
     });
     if (matchingPeople.length) return matchingPeople;
   }
