@@ -1548,7 +1548,7 @@ export default function GuestNameExtractorPage() {
                 const peopleSource = /alltour/i.test(item.company)
                   ? item.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
                   : item.pages.join("\n\n");
-                const guests = extractPeople(peopleSource || item.content || "", query, item.company);
+                const guests = extractPeople(peopleSource || item.content || "", effectivePeopleQuery, item.company);
                 const uniqueGuests = guests.filter((person, index, all) =>
                   all.findIndex((candidate) =>
                     normalize(candidate.name) === normalize(person.name)
