@@ -1296,10 +1296,10 @@ export default function GuestNameExtractorPage() {
 
       {files.length > 0 && <>
         <section className="panel">
-          <h2>2. البحث بالاسم أو الشركة أو رقم الحجز أو رقم الغرفة أو الرقم التأكيدي</h2>
-          <p className="muted">ستظهر الملفات والصفحات المطابقة. عند رفع تقرير arr.pdf يمكنك أيضاً البحث برقم الغرفة أو الرقم التأكيدي لعرض اسم النزيل وميعاد وصوله.</p>
+          <h2>2. البحث برقم الحجز أو الرقم التأكيدي أو اسم النزيل أو الشركة</h2>
+          <p className="muted">ستظهر ملفات الحجوزات المطابقة، مع أسماء النزلاء وتواريخ ميلادهم المستخرجة من جميع صفحات المستند.</p>
           <input value={query} onChange={(event) => setQuery(event.target.value)}
-            placeholder="اكتب الاسم أو الشركة أو رقم الحجز أو رقم الغرفة أو الرقم التأكيدي..." aria-label="البحث بالاسم أو الشركة أو رقم الحجز أو رقم الغرفة أو الرقم التأكيدي"
+            placeholder="اكتب رقم الحجز أو الرقم التأكيدي أو اسم النزيل أو الشركة..." aria-label="البحث برقم الحجز أو الرقم التأكيدي أو اسم النزيل أو الشركة"
             style={{ width: "100%", minHeight: 50, border: "1px solid #cbd6e2", borderRadius: 10, padding: "10px 14px", font: "inherit" }} />
           <div className="folder-stats">
             <div><strong>{files.length}</strong><span>ملف تمت قراءته</span></div>
