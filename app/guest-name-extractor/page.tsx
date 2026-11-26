@@ -13,6 +13,106 @@ type MsgAttachmentPreview = { name: string; type: string; blob: Blob; url: strin
 type AttachmentSearchMatch = { page: number; excerpt: string };
 type MsgPreviewData = { subject: string; sender: string; senderEmail: string; to: string; cc: string; sent: string; bodyHtml: string; bodyText: string; attachments: MsgAttachmentPreview[] };
 
+type ArrivalRecord = { roomNo: string; name: string; confirmationNo: string; arrivalTime: string };
+
+const ARRIVAL_REPORT_KEY = "nationality-arrival-report-v1";
+
+async function extractArrivalReport(file: File): Promise<ArrivalRecord[]> {
+  const pdfjs = await import("pdfjs-dist");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  const pdf = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+  const records: ArrivalRecord[] = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const items: { y: number; x: number; text: string }[] = [];
+
+    for (const item of content.items) {
+      if (!("str" in item) || !item.str.trim() || !("transform" in item)) continue;
+      items.push({
+        y: item.transform[5],
+        x: item.transform[4],
+        text: item.str.trim(),
+      });
+    }
+
+    // PMS reports may position cells on slightly different baselines.
+    // A wider tolerance keeps Room No. + Name + Company on the same row.
+    const grouped: { y: number; items: { x: number; text: string }[] }[] = [];
+    for (const item of items) {
+      let line = grouped.find((entry) => Math.abs(entry.y - item.y) <= 5);
+      if (!line) {
+        line = { y: item.y, items: [] };
+        grouped.push(line);
+      }
+      line.items.push({ x: item.x, text: item.text });
+    }
+
+    const lines = grouped
+      .sort((a, b) => b.y - a.y)
+      .map((line) =>
+        line.items
+          .sort((a, b) => a.x - b.x)
+          .map((item) => item.text)
+          .join(" ")
+          .replace(/\s+/g, " ")
+          .trim(),
+      );
+
+    const isRoomLine = (line: string) => {
+      const match = line.match(/^(\d{3,5})\s+(.+)$/);
+      return Boolean(match && match[2].includes(",") && !/^\d{5,9}\b/.test(match[2]));
+    };
+
+    for (let index = 0; index < lines.length; index++) {
+      const roomLine = lines[index].match(/^(\d{3,5})\s+(.+)$/);
+      if (!roomLine || !roomLine[2].includes(",")) continue;
+
+      const rowText = roomLine[2];
+      const companyMarker = rowText.search(/\s+T\s*-/i);
+      let guestName = companyMarker >= 0 ? rowText.slice(0, companyMarker).trim() : "";
+      if (!guestName) {
+        const titledName = rowText.match(/^(.+?,\s*(?:Mr|Mrs|Ms|Miss|Mstr|Master)\.?)\b/i);
+        if (titledName) guestName = titledName[1].trim();
+      }
+      if (!guestName) continue;
+
+      let confirmationNo = "";
+      let arrivalTime = "";
+
+      // Conf No. and Arr. Time are printed on the following visual row.
+      // Search a few lines ahead because PDF text extraction can split cells.
+      for (let next = index + 1; next < Math.min(index + 5, lines.length); next++) {
+        if (isRoomLine(lines[next])) break;
+
+        if (!confirmationNo) {
+          const conf = lines[next].match(/^\s*(\d{5,9})(?=\s|$)/);
+          if (conf) confirmationNo = conf[1];
+        }
+        if (!arrivalTime) {
+          const time = lines[next].match(/\b([01]?\d|2[0-3]):[0-5]\d\b/);
+          if (time) arrivalTime = time[0].padStart(5, "0");
+        }
+        if (confirmationNo && arrivalTime) break;
+      }
+
+      if (confirmationNo && arrivalTime) {
+        records.push({
+          roomNo: roomLine[1], // Keep leading zeroes, e.g. 0321.
+          name: guestName.replace(/\s+/g, " "),
+          confirmationNo,
+          arrivalTime,
+        });
+      }
+    }
+  }
+
+  const unique = new Map<string, ArrivalRecord>();
+  for (const record of records) unique.set(record.confirmationNo, record);
+  return Array.from(unique.values());
+}
+
 const NATIVE_FOLDER_KEY = "long-beach-native-reservation-folder-v1";
 const GUEST_STATE_KEY = "nationality-guest-extractor-state-v1";
 const SUPPORTED = new Set(["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "docx", "msg", "txt", "csv", "xml", "html", "htm", "eml", "log"]);
@@ -50,6 +150,15 @@ function matchesSearchText(searchableText: string, query: string) {
   return tokens.length > 1 ? tokens.every((token) => haystack.includes(token)) : haystack.includes(needle);
 }
 
+
+// Arrival reports may use "SURNAME, Mr. GIVEN" while vouchers use
+// "MR. SURNAME GIVEN". Match meaningful name parts regardless of order.
+const arrivalNameMatchesText = (arrivalName: string, searchableText: string) => {
+  const ignored = new Set(["mr", "mrs", "ms", "miss", "mstr", "master"]);
+  const tokens = normalize(arrivalName).split(/\s+/).filter((token) => token.length > 1 && !ignored.has(token));
+  const searchable = ` ${normalize(searchableText)} `;
+  return tokens.length >= 2 && tokens.every((token) => searchable.includes(` ${token} `));
+};
 
 const MONTH_FOLDER_PATTERN = /^\\d{1,2}[._ -]?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[._ -].*)?$/i;
 
@@ -682,6 +791,11 @@ export default function GuestNameExtractorPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [restoreComplete, setRestoreComplete] = useState(false);
   const [storageMessage, setStorageMessage] = useState("جارٍ استعادة المجلد المحفوظ...");
+  const [arrivals, setArrivals] = useState<ArrivalRecord[]>([]);
+  const [arrivalReportName, setArrivalReportName] = useState("");
+  const [arrivalStatus, setArrivalStatus] = useState("");
+  const [arrivalBusy, setArrivalBusy] = useState(false);
+  const arrivalInputRef = useRef<HTMLInputElement>(null);
   const nativeScanInProgressRef = useRef(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
@@ -708,6 +822,8 @@ export default function GuestNameExtractorPage() {
         const savedState = JSON.parse(localStorage.getItem(GUEST_STATE_KEY) || "{}");
         const savedNativePath = window.desktopBridge ? localStorage.getItem(NATIVE_FOLDER_KEY) || "" : "";
         if (!active) return;
+        const savedArrivals = JSON.parse(localStorage.getItem(ARRIVAL_REPORT_KEY) || "[]");
+        if (Array.isArray(savedArrivals)) setArrivals(savedArrivals as ArrivalRecord[]);
         setFolderName(String(savedState.folderName || ""));
         setQuery(String(savedState.query || ""));
         setCurrentPage(Math.max(1, Number(savedState.currentPage) || 1));
@@ -744,17 +860,43 @@ export default function GuestNameExtractorPage() {
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   const results = useMemo<SearchResult[]>(() => {
-    if (!normalize(query)) return [];
+    const q = normalize(query);
+    if (!q) return [];
+
+    // Resolve room/confirmation numbers through arr.pdf, then search by guest name.
+    const linkedArrivalGuests = arrivals.filter((item) =>
+      normalize(item.roomNo).replace(/\s+/g, "") === q.replace(/\s+/g, "")
+      || normalize(item.confirmationNo).replace(/\s+/g, "") === q.replace(/\s+/g, "")
+    );
+    const isArrivalNumberSearch = linkedArrivalGuests.length > 0;
+    const matchingArrivalNames = linkedArrivalGuests.map((item) => item.name);
+
     return files.flatMap((item) => {
       const matchedPages = item.pages.reduce<number[]>((acc, page, index) => {
         const searchable = [item.name, item.path, item.company, page].join(" ");
-        if (matchesSearchText(searchable, query)) acc.push(index + 1);
+        const matchesLinkedGuest = matchingArrivalNames.some((name) => arrivalNameMatchesText(name, searchable));
+        const matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, query);
+        if (matchesDirectQuery || matchesLinkedGuest) {
+          acc.push(index + 1);
+        }
         return acc;
       }, []);
-      if (matchesSearchText([item.name, item.path, item.company].join(" "), query) && !matchedPages.length) matchedPages.push(1);
+      if (!isArrivalNumberSearch && matchesSearchText([item.name, item.path, item.company].join(" "), query) && !matchedPages.length) {
+        matchedPages.push(1);
+      }
       return matchedPages.length ? [{ ...item, matchedPages }] : [];
     });
-  }, [files, query]);
+  }, [files, query, arrivals]);
+
+  const arrivalMatches = useMemo(() => {
+    const q = normalize(query).replace(/\\s+/g, "");
+    if (!q || !arrivals.length) return [];
+    return arrivals.filter((item) =>
+      normalize(item.roomNo).replace(/\\s+/g, "").includes(q)
+      || normalize(item.confirmationNo).replace(/\\s+/g, "").includes(q)
+      || normalize(item.name).includes(normalize(query)),
+    );
+  }, [arrivals, query]);
 
   const companies = useMemo(() => new Set(files.map((file) => file.company).filter((name) => name !== "غير محددة")).size, [files]);
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files]);
@@ -778,6 +920,39 @@ export default function GuestNameExtractorPage() {
     () => extractPeople(peopleSourceText, query, selected?.company || ""),
     [peopleSourceText, query, selected?.company],
   );
+
+  async function uploadArrivalReport(selectedFiles: FileList | null) {
+    const file = selectedFiles?.[0];
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".pdf")) {
+      setArrivalStatus("من فضلك اختر تقرير PDF بصيغة arr.pdf.");
+      return;
+    }
+    setArrivalBusy(true);
+    setArrivalStatus("جارٍ قراءة تقرير الوصول محلياً...");
+    try {
+      const parsed = await extractArrivalReport(file);
+      if (!parsed.length) {
+        setArrivalStatus("لم يتم العثور على سجلات وصول قابلة للقراءة. تأكد من أن التقرير يحتوي على أعمدة Room No. وName وConf No. وArr. Time.");
+        return;
+      }
+      setArrivals(parsed);
+      setArrivalReportName(file.name);
+      localStorage.setItem(ARRIVAL_REPORT_KEY, JSON.stringify(parsed));
+      setArrivalStatus(`تم استخراج ${parsed.length.toLocaleString("en-US")} حجز من التقرير ${file.name} وحفظ البيانات محلياً.`);
+    } catch {
+      setArrivalStatus("تعذرت قراءة التقرير. تأكد من سلامة ملف PDF ثم حاول مرة أخرى.");
+    } finally {
+      setArrivalBusy(false);
+    }
+  }
+
+  function clearArrivalReport() {
+    localStorage.removeItem(ARRIVAL_REPORT_KEY);
+    setArrivals([]);
+    setArrivalReportName("");
+    setArrivalStatus("تم حذف بيانات تقرير الوصول المحفوظة من المتصفح.");
+  }
 
   async function scanFolder(selectedFiles: FileList | null) {
     if (!selectedFiles?.length) return;
@@ -1297,12 +1472,21 @@ export default function GuestNameExtractorPage() {
           </button>
           {isDesktop && nativeFolderPath && <button type="button" className="add-button" onClick={() => void scanNativeFolder(nativeFolderPath)} disabled={busy}>فحص التحديثات</button>}
           {files.length > 0 && <button type="button" className="add-button" onClick={() => void removeSavedFolder()} disabled={busy}>إلغاء ربط المجلد</button>}
+          <button type="button" className="add-button" onClick={() => arrivalInputRef.current?.click()} disabled={arrivalBusy}>
+            {arrivalBusy ? "جارٍ قراءة التقرير..." : arrivals.length ? "استبدال تقرير arr.pdf" : "رفع تقرير arr.pdf"}
+          </button>
+          {arrivals.length > 0 && <button type="button" className="add-button" onClick={clearArrivalReport} disabled={arrivalBusy}>حذف تقرير الوصول</button>}
+          <input ref={arrivalInputRef} type="file" accept=".pdf,application/pdf" hidden
+            onChange={(event) => { void uploadArrivalReport(event.currentTarget.files); event.currentTarget.value = ""; }} />
           <input ref={inputRef} type="file" multiple hidden
             {...({ webkitdirectory: "", directory: "" } as Record<string, string>)}
             onChange={(event) => { void scanFolder(event.currentTarget.files); event.currentTarget.value = ""; }} />
         </div>
         {folderName && <div className="filename" dir="ltr">المجلد المرتبط: {folderName}</div>}
         <p className="saved-hint" role="status">{storageMessage}</p>
+        {arrivalReportName && <div className="filename">تقرير الوصول: {arrivalReportName} · {arrivals.length.toLocaleString("en-US")} حجز</div>}
+        {arrivals.length > 0 && <div className="filename">بيانات الوصول المحفوظة: {arrivals.length.toLocaleString("en-US")} حجز</div>}
+        {arrivalStatus && <p className="saved-hint" role="status">{arrivalStatus}</p>}
         {busy && <div className="folder-progress" role="status">
           <div className="progress-track"><span style={{ width: progress.total ? (progress.done / progress.total * 100) + "%" : "0%" }} /></div>
           <p className="saved-hint">جارٍ فحص الملفات: {progress.done} من {progress.total}</p>
@@ -1323,7 +1507,13 @@ export default function GuestNameExtractorPage() {
             <div><strong>{companies}</strong><span>شركة/مجلد شركة</span></div>
             <div><strong>{formatSize(totalSize)}</strong><span>إجمالي حجم الملفات</span></div>
           </div>
-          {query.trim() && <p className="saved-hint">عدد الملفات المطابقة: {results.length}</p>}
+          {query.trim() && <p className="saved-hint">عدد الملفات المطابقة: {results.length} · حجوزات تقرير الوصول المطابقة: {arrivalMatches.length}</p>}
+          {query.trim() && arrivalMatches.length > 0 && <div className="folder-results" style={{ marginTop: 14 }}>
+            {arrivalMatches.map((item) => <article className="folder-result" key={item.confirmationNo}>
+              <strong>{item.name}</strong>
+              <p className="muted">رقم الغرفة: {item.roomNo} · الرقم التأكيدي: {item.confirmationNo} · موعد الوصول: {item.arrivalTime}</p>
+            </article>)}
+          </div>}
         </section>
         {query.trim() && <section className="panel">
           <h2>3. نتائج البحث</h2>
