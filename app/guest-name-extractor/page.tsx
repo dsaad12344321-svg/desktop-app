@@ -660,6 +660,44 @@ function extractPeople(text: string, searchTerm: string, company = "") {
     if (tezPeople.length) return tezPeople;
   }
 
+  // FUN&SUN / FUN voucher:
+  // Passenger rows use the columns Title, Surname/Name, Age, Birthdate,
+  // Arrival, Hour, Departure, Hour, Passport. The flight and passport
+  // columns follow the DOB, so the generic titled-name parser cannot
+  // safely identify the end of a guest row. Anchor each guest on its DOB.
+  const isFunSunVoucher = /(?:FUN\\s*&\\s*SUN|FUN\\s+SUN|FUN\\s+SUN\\s+TRAVEL|EX\\s+TUI\\s+RUSSIA)/i.test(clean)
+    || /^fun(?:\\s*\\&?\\s*sun)?$/i.test(company.trim());
+  if (isFunSunVoucher && /\\bPassenger\\s+Informations\\b/i.test(clean)
+    && /\\bBirthdate\\b/i.test(clean)) {
+    const passengerStart = clean.search(/\\bPassenger\\s+Informations\\b/i);
+    const passengerSection = clean.slice(passengerStart)
+      .split(/\\b(?:Agency\\s+Note|Hotel\\s+Notes|Agency\\s+Name|Agency\\s+User|Sejour\\s+Hotel\\s+Name)\\b/i)[0];
+    const funSunRowPattern = /\\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF|ADT)\\.?\\s+([\\p{L}][\\p{L}\\p{M}'’., -]{1,65}?)\\s+-\\s+(\\d{1,2}[./-]\\d{1,2}[./-]\\d{4})\\b/giu;
+    const funSunPeople = Array.from(passengerSection.matchAll(funSunRowPattern), (match) => ({
+      name: titleCaseName(match[2].replace(/[,]+/g, " ").replace(/\\s+/g, " ").trim()),
+      dob: match[3].replace(/[/-]/g, "."),
+    })).filter((person) => person.name && !/^(?:surname name|name age|age)$/i.test(person.name));
+
+    if (funSunPeople.length) {
+      const normalizedSearch = normalize(searchTerm);
+      const compactSearch = normalizedSearch.replace(/\\s+/g, "");
+      // Room/confirmation searches identify the voucher in Multiple View;
+      // return every passenger in that voucher. A name search must also
+      // return the complete passenger group once any guest matches.
+      const matchesVoucher = !normalizedSearch
+        || /^\\d{3,9}$/.test(compactSearch)
+        || funSunPeople.some((person) => {
+          const nameParts = normalize(person.name).split(/\\s+/).filter(Boolean);
+          const queryParts = normalizedSearch.split(/\\s+/).filter(Boolean);
+          return normalize(person.name).includes(normalizedSearch)
+            || (queryParts.length > 0 && queryParts.every((token) =>
+              nameParts.some((part) => part.includes(token)),
+            ));
+        });
+      return matchesVoucher ? funSunPeople : [];
+    }
+  }
+
   // SUN International / Hotel2Sejour voucher:
   // Passenger rows follow the "Passenger Informations" table header.
   const sunSectionIndex = clean.search(/passenger\s+informations/i);
