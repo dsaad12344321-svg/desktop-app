@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import voucherRules from "@/data/voucher-extraction-rules.json";
+import voucherRules from "../../data/voucher-extraction-rules.json";
 
 type IndexedFile = {
   id: string; name: string; path: string; company: string; extension: string;
