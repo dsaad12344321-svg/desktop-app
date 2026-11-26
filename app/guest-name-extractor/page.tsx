@@ -282,7 +282,7 @@ async function extractText(file: File, extension: string): Promise<{ content: st
             attachmentPages.push(visualRows
               .sort((a, b) => b.y - a.y)
               .map((row) => row.cells.sort((a, b) => a.x - b.x).map((cell) => cell.text).join(" "))
-              .join("\\n"));
+              .join("\n"));
           }
         } else if (attachmentExtension === "docx") {
           const mammoth = await import("mammoth/mammoth.browser");
@@ -783,23 +783,23 @@ function extractPeople(text: string, searchTerm: string, company = "") {
   }
 
   // Generic hotel rooming-list attachment fallback.
-  // Many supplier PDFs print each guest as a titled name followed by a DOB
-  // and sometimes a passport/reference code, without any "Guest Name" label.
-  // Example: "Mrs. MAZUREK KLAUDIA 29/06/1994 W61015".
-  const titledAttachmentPattern = /\\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\\.?\\s+([\\p{L}][\\p{L}’'.,-]*(?:\\s+[\\p{L}][\\p{L}’'.,-]*){1,4}?)\\s+(\\d{1,2}[./-]\\d{1,2}[./-]\\d{4})\\b/giu;
+  // Some supplier PDFs place the guest name and DOB in separate visual rows.
+  // Extract the titled name independently; attach a DOB only when it follows
+  // that same name before another guest/title or booking field begins.
+  const titledAttachmentPattern = /\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\.?\s+([\p{L}][\p{L}’'.,-]*(?:\s+[\p{L}][\p{L}’'.,-]*){1,4}?)(?:\s+(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b)?(?=\s+(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\b|\s+\d{1,2}:\d{2}\b|\s+[A-Z]{1,3}\d{4,}\b|\s+passport\b|$)/giu;
   const titledAttachmentPeople = Array.from(clean.matchAll(titledAttachmentPattern), (match) => ({
     name: titleCaseName(match[2].replace(/[,]+/g, " ").trim()),
-    dob: match[3].replace(/[/-]/g, "."),
+    dob: match[3] ? match[3].replace(/[/-]/g, ".") : "",
   })).filter((person) => person.name && !/^(?:DOUBLE ROOM|STANDARD|PREMIUM)$/i.test(person.name));
   if (titledAttachmentPeople.length) {
     const normalizedSearch = normalize(searchTerm);
-    if (!normalizedSearch || /^\\d{3,9}$/.test(normalizedSearch.replace(/\\s+/g, ""))) {
+    if (!normalizedSearch || /^\d{3,9}$/.test(normalizedSearch.replace(/\s+/g, ""))) {
       return titledAttachmentPeople;
     }
-    const tokens = normalizedSearch.split(/\\s+/)
+    const tokens = normalizedSearch.split(/\s+/)
       .filter((token) => !/^(?:mr|mrs|ms|miss|mstr|master|chd|chld)$/.test(token));
     const matchingPeople = titledAttachmentPeople.filter((person) => {
-      const parts = normalize(person.name).split(/\\s+/);
+      const parts = normalize(person.name).split(/\s+/);
       return normalize(person.name).includes(normalizedSearch)
         || (tokens.length > 0 && tokens.every((token) => parts.some((part) => part.includes(token))));
     });
