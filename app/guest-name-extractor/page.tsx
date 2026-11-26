@@ -761,6 +761,29 @@ function extractPeople(text: string, searchTerm: string, company = "") {
     if (people.length) return people;
   }
 
+  // Generic hotel rooming-list attachment fallback.
+  // Many supplier PDFs print each guest as a titled name followed by a DOB
+  // and sometimes a passport/reference code, without any "Guest Name" label.
+  // Example: "Mrs. MAZUREK KLAUDIA 29/06/1994 W61015".
+  const titledAttachmentPattern = /\\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHLD)\\.?\\s+([\\p{L}][\\p{L}’'.,-]*(?:\\s+[\\p{L}][\\p{L}’'.,-]*){1,4}?)\\s+(\\d{1,2}[./-]\\d{1,2}[./-]\\d{4})\\b/giu;
+  const titledAttachmentPeople = Array.from(clean.matchAll(titledAttachmentPattern), (match) => ({
+    name: titleCaseName(match[2].replace(/[,]+/g, " ").trim()),
+    dob: match[3].replace(/[/-]/g, "."),
+  })).filter((person) => person.name && !/^(?:DOUBLE ROOM|STANDARD|PREMIUM)$/i.test(person.name));
+  if (titledAttachmentPeople.length) {
+    const normalizedSearch = normalize(searchTerm);
+    if (!normalizedSearch || /^\\d{3,9}$/.test(normalizedSearch.replace(/\\s+/g, ""))) {
+      return titledAttachmentPeople;
+    }
+    const tokens = normalizedSearch.split(/\\s+/).filter(Boolean);
+    const matchingPeople = titledAttachmentPeople.filter((person) => {
+      const parts = normalize(person.name).split(/\\s+/);
+      return normalize(person.name).includes(normalizedSearch)
+        || tokens.every((token) => parts.some((part) => part.includes(token)));
+    });
+    if (matchingPeople.length) return matchingPeople;
+  }
+
   const datePattern = "(?:\\d{1,2}[\\/-]\\d{1,2}[\\/-]\\d{2,4}|\\d{4}[\\/-]\\d{1,2}[\\/-]\\d{1,2}|\\d{1,2}\\s+[A-Za-z]{3,9}\\s+\\d{4})";
   const dates: string[] = [];
   const dateRegex = new RegExp("(?:date\\s*of\\s*birth|birth\\s*date|dob|d\\.o\\.b\\.?|تاريخ\\s*الميلاد)\\s*[:#-]?\\s*(" + datePattern + ")", "gi");
