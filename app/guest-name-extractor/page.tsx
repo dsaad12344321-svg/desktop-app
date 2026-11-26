@@ -831,6 +831,7 @@ export default function GuestNameExtractorPage() {
   const [arrivalStatus, setArrivalStatus] = useState("");
   const [arrivalBusy, setArrivalBusy] = useState(false);
   const arrivalInputRef = useRef<HTMLInputElement>(null);
+  const nativeScanInProgressRef = useRef(false);
 
   async function refreshBrowserStorage() {
     try {
@@ -1095,6 +1096,9 @@ export default function GuestNameExtractorPage() {
 
   async function scanNativeFolder(rootPath: string) {
     if (!window.desktopBridge) return;
+    // Ignore duplicate folder-change events while a full indexing pass is running.
+    if (nativeScanInProgressRef.current) return;
+    nativeScanInProgressRef.current = true;
     setBusy(true); setError(""); setWarnings([]); setFiles([]); setQuery(""); setSelected(null);
     setNativeFolderPath(rootPath);
     setFolderName(rootPath);
@@ -1129,7 +1133,14 @@ export default function GuestNameExtractorPage() {
         } catch {
           failed.push(entry.relativePath);
         }
-        setProgress({ done: index + 1, total: entries.length });
+        // Avoid thousands of React renders; update progress in small batches.
+        if ((index + 1) % 10 === 0 || index === entries.length - 1) {
+          setProgress({ done: index + 1, total: entries.length });
+        }
+        // Yield to Chromium so the window can paint and respond to user input.
+        if ((index + 1) % 5 === 0) {
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 0));
+        }
       }
       setFiles(indexed);
       setWarnings(failed);
@@ -1141,6 +1152,7 @@ export default function GuestNameExtractorPage() {
       setError(scanError instanceof Error ? scanError.message : "تعذرت قراءة المجلد المحدد.");
       setStorageMessage("تعذرت فهرسة المجلد. تحقق من اتصال القرص أو صلاحيات الوصول.");
     } finally {
+      nativeScanInProgressRef.current = false;
       setBusy(false);
     }
   }
