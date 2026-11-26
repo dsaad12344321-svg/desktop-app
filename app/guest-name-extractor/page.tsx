@@ -259,9 +259,30 @@ async function extractText(file: File, extension: string): Promise<{ content: st
           for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
             const page = await pdf.getPage(pageNumber);
             const pageContent = await page.getTextContent();
-            attachmentPages.push(pageContent.items
-              .map((item) => ("str" in item ? item.str : ""))
-              .join(" "));
+            // Keep PDF table cells in visual reading order (top-to-bottom,
+            // then left-to-right). Some suppliers emit DOB cells before the
+            // guest-name cells in the PDF's internal object order.
+            const positionedItems = pageContent.items
+              .filter((item): item is typeof item & { str: string; transform: number[] } =>
+                "str" in item && "transform" in item && Boolean(item.str?.trim()))
+              .map((item) => ({
+                text: item.str.trim(),
+                x: item.transform[4],
+                y: item.transform[5],
+              }));
+            const visualRows: { y: number; cells: { x: number; text: string }[] }[] = [];
+            for (const item of positionedItems) {
+              let row = visualRows.find((candidate) => Math.abs(candidate.y - item.y) <= 2);
+              if (!row) {
+                row = { y: item.y, cells: [] };
+                visualRows.push(row);
+              }
+              row.cells.push({ x: item.x, text: item.text });
+            }
+            attachmentPages.push(visualRows
+              .sort((a, b) => b.y - a.y)
+              .map((row) => row.cells.sort((a, b) => a.x - b.x).map((cell) => cell.text).join(" "))
+              .join("\\n"));
           }
         } else if (attachmentExtension === "docx") {
           const mammoth = await import("mammoth/mammoth.browser");
