@@ -222,6 +222,23 @@ function getFolderMetadata(path: string): { company: string; day?: string; month
   };
 }
 
+function getNativeFolderMetadata(relativePath: string): { company: string; day?: string; month?: string } {
+  const parts = relativePath.split("/").filter(Boolean);
+  const monthIndex = parts.findIndex((part) => MONTH_FOLDER_PATTERN.test(part));
+  if (monthIndex >= 0) {
+    const dayIndex = monthIndex + 1;
+    return {
+      month: parts[monthIndex],
+      day: /^\\d{1,2}$/.test(parts[dayIndex] || "") ? parts[dayIndex] : undefined,
+      company: parts[dayIndex + 1] || parts[dayIndex] || "غير محددة",
+    };
+  }
+  if (/^\\d{1,2}$/.test(parts[0] || "")) {
+    return { day: parts[0], company: parts[1] || "غير محددة" };
+  }
+  return { company: parts.length > 1 ? parts[0] : "غير محددة" };
+}
+
 async function extractText(file: File, extension: string): Promise<{ content: string; pages: string[] }> {
   if (["txt", "csv", "xml", "html", "htm", "eml", "log"].includes(extension)) {
     const content = await file.text();
@@ -1097,7 +1114,7 @@ export default function GuestNameExtractorPage() {
           const bytes = await window.desktopBridge.readFile(rootPath, entry.path);
           const file = new File([bytes.slice().buffer as ArrayBuffer], entry.name, { lastModified: entry.mtimeMs });
           const extracted = await extractText(file, extension);
-          const folderMetadata = getFolderMetadata(entry.relativePath);
+          const folderMetadata = getNativeFolderMetadata(entry.relativePath);
           indexed.push({
             id: entry.path + "-" + entry.mtimeMs,
             name: entry.name,
