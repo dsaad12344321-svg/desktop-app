@@ -1032,7 +1032,7 @@ export default function GuestNameExtractorPage() {
     if (!selected || selected.extension.toLowerCase() !== "msg") return;
     // In the desktop app, open the original file path through Windows file associations.
     // This allows Outlook (if installed and associated with .msg) to open the real file.
-    if (window.desktopBridge && selected.path.startsWith("\\\\" ) || window.desktopBridge && /^[a-zA-Z]:[\\/]/.test(selected.path)) {
+    if (window.desktopBridge && (selected.path.startsWith("\\\\") || /^[a-zA-Z]:[\\/]/.test(selected.path))) {
       try {
         const opened = await window.desktopBridge.openPath(selected.path);
         setStorageMessage(opened
