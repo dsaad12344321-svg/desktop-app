@@ -1295,6 +1295,7 @@ export default function GuestNameExtractorPage() {
     if (!window.confirm("هل تريد حذف نسخة المجلد المحفوظة من هذا المتصفح؟ لن يتم حذف الملفات الأصلية من جهازك.")) return;
     try {
       await clearGuestFiles();
+      await window.desktopBridge?.unwatchFolder();
       await refreshBrowserStorage();
       localStorage.removeItem(GUEST_STATE_KEY);
       setFiles([]);
@@ -1302,8 +1303,8 @@ export default function GuestNameExtractorPage() {
       setSelected(null);
       setCurrentPage(1);
       setFolderName("");
-    setNativeFolderPath("");
-    localStorage.removeItem(NATIVE_FOLDER_KEY);
+      setNativeFolderPath("");
+      localStorage.removeItem(NATIVE_FOLDER_KEY);
       setWarnings([]);
       setStorageMessage("تم حذف المجلد المحفوظ من المتصفح.");
     } catch {
