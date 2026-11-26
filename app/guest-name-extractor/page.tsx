@@ -19,6 +19,14 @@ const SUPPORTED = new Set(["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "t
 const normalize = (value: string) =>
   value.toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
+function getPreviewMimeType(extension: string) {
+  const mimeTypes: Record<string, string> = {
+    pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
+    gif: "image/gif", webp: "image/webp", bmp: "image/bmp", tif: "image/tiff", tiff: "image/tiff",
+  };
+  return mimeTypes[extension.toLowerCase()] || "application/octet-stream";
+}
+
 type VoucherRule = { id: string; company: string; aliases: string[]; parser: string; signatures: string[]; bookingIdentifiers: string[]; guestFields: string[] };
 const configuredVoucherRules = voucherRules as { version: number; rules: VoucherRule[]; searchFields: string[] };
 
@@ -730,7 +738,9 @@ export default function GuestNameExtractorPage() {
     } catch { /* تجاهل تعذر حفظ حالة العرض */ }
   }, [restoreComplete, folderName, query, selected, currentPage]);
 
-  const previewUrl = useMemo(() => selected ? URL.createObjectURL(selected.file) : "", [selected]);
+  const previewUrl = useMemo(() => selected
+    ? URL.createObjectURL(new Blob([selected.file], { type: getPreviewMimeType(selected.extension) }))
+    : "", [selected]);
   useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
 
   const results = useMemo<SearchResult[]>(() => {
