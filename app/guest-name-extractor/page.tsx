@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import voucherRules from "@/data/voucher-extraction-rules.json";
 
 type IndexedFile = {
   id: string; name: string; path: string; company: string; extension: string;
@@ -113,82 +114,34 @@ async function extractArrivalReport(file: File): Promise<ArrivalRecord[]> {
 }
 
 const NATIVE_FOLDER_KEY = "long-beach-native-reservation-folder-v1";
-const GUEST_DB_NAME = "nationality-guest-files";
-const GUEST_DB_VERSION = 1;
-const GUEST_STORE_NAME = "files";
 const GUEST_STATE_KEY = "nationality-guest-extractor-state-v1";
-async function readBrowserStorageEstimate(): Promise<{ usage: number; quota: number } | null> {
-  if (typeof navigator === "undefined" || !navigator.storage?.estimate) return null;
-  const estimate = await navigator.storage.estimate();
-  if (typeof estimate.quota !== "number") return null;
-  return { usage: estimate.usage ?? 0, quota: estimate.quota };
-}
-
-function formatStorageMB(bytes: number) {
-  return (bytes / (1024 * 1024)).toFixed(bytes >= 10 * 1024 * 1024 ? 0 : 1) + "MB";
-}
-
-
-function openGuestFilesDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    const request = indexedDB.open(GUEST_DB_NAME, GUEST_DB_VERSION);
-    request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(GUEST_STORE_NAME)) {
-        db.createObjectStore(GUEST_STORE_NAME, { keyPath: "id" });
-      }
-    };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error || new Error("تعذر فتح قاعدة البيانات المحلية."));
-  });
-}
-
-async function saveGuestFiles(files: IndexedFile[]): Promise<void> {
-  const db = await openGuestFilesDB();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction(GUEST_STORE_NAME, "readwrite");
-    const store = transaction.objectStore(GUEST_STORE_NAME);
-    store.clear();
-    for (const file of files) store.put(file);
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error || new Error("تعذر حفظ الملفات."));
-    transaction.onabort = () => reject(transaction.error || new Error("تم إلغاء حفظ الملفات."));
-  });
-  db.close();
-}
-
-async function loadGuestFiles(): Promise<IndexedFile[]> {
-  const db = await openGuestFilesDB();
-  const files = await new Promise<IndexedFile[]>((resolve, reject) => {
-    const transaction = db.transaction(GUEST_STORE_NAME, "readonly");
-    const request = transaction.objectStore(GUEST_STORE_NAME).getAll();
-    request.onsuccess = () => resolve((request.result || []) as IndexedFile[]);
-    request.onerror = () => reject(request.error || new Error("تعذر استعادة الملفات."));
-  });
-  db.close();
-  return files.filter((item) => item.file instanceof Blob).map((item) => {
-    const storedBlob = item.file as Blob;
-    const restoredFile = storedBlob instanceof File
-      ? storedBlob
-      : new File([storedBlob], item.name, { type: storedBlob.type });
-    return { ...item, file: restoredFile } as IndexedFile;
-  });
-}
-
-async function clearGuestFiles(): Promise<void> {
-  const db = await openGuestFilesDB();
-  await new Promise<void>((resolve, reject) => {
-    const transaction = db.transaction(GUEST_STORE_NAME, "readwrite");
-    transaction.objectStore(GUEST_STORE_NAME).clear();
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error || new Error("تعذر حذف الملفات المحفوظة."));
-  });
-  db.close();
-}
-
 const SUPPORTED = new Set(["pdf", "docx", "msg", "txt", "csv", "xml", "html", "htm", "eml", "log"]);
 const normalize = (value: string) =>
   value.toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+type VoucherRule = { id: string; company: string; aliases: string[]; parser: string; signatures: string[]; bookingIdentifiers: string[]; guestFields: string[] };
+const configuredVoucherRules = voucherRules as { version: number; rules: VoucherRule[]; searchFields: string[] };
+
+function detectVoucherCompany(text: string, currentCompany = "") {
+  if (currentCompany.trim() && currentCompany.trim() !== "غير محددة") return currentCompany.trim();
+  for (const rule of configuredVoucherRules.rules) {
+    if (rule.signatures.length && rule.signatures.every((pattern) => {
+      try { return new RegExp(pattern, "i").test(text); } catch { return false; }
+    })) return rule.company;
+  }
+  return currentCompany || "غير محددة";
+}
+
+function matchesSearchText(searchableText: string, query: string) {
+  const haystack = normalize(searchableText);
+  const needle = normalize(query);
+  if (!needle) return false;
+  const compactNeedle = needle.replace(/\s+/g, "");
+  if (/^\d+$/.test(compactNeedle)) return haystack.replace(/\s+/g, "").includes(compactNeedle);
+  const tokens = needle.split(/\s+/).filter(Boolean);
+  return tokens.length > 1 ? tokens.every((token) => haystack.includes(token)) : haystack.includes(needle);
+}
+
 
 // Arrival reports may use "SURNAME, Mr. GIVEN" while vouchers use
 // "MR. SURNAME GIVEN". Match meaningful name parts regardless of order.
@@ -367,6 +320,7 @@ function extractEaglePeople(text: string) {
 }
 
 function extractPeople(text: string, searchTerm: string, company = "") {
+  company = detectVoucherCompany(text, company);
   // Eagle Travel rooming lists are sent as Outlook email tables with surname/given-name
   // entries in the Names column and matching two-digit DOBs in the Age column.
   const hasEagleRoomingTable = /\bNames\b[\s\S]{0,200}\bAge\b[\s\S]{0,100}\bACC\b/i.test(text);
@@ -825,7 +779,6 @@ export default function GuestNameExtractorPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [restoreComplete, setRestoreComplete] = useState(false);
   const [storageMessage, setStorageMessage] = useState("جارٍ استعادة المجلد المحفوظ...");
-  const [browserStorage, setBrowserStorage] = useState<{ usage: number; quota: number } | null>(null);
   const [arrivals, setArrivals] = useState<ArrivalRecord[]>([]);
   const [arrivalReportName, setArrivalReportName] = useState("");
   const [arrivalStatus, setArrivalStatus] = useState("");
@@ -833,19 +786,6 @@ export default function GuestNameExtractorPage() {
   const arrivalInputRef = useRef<HTMLInputElement>(null);
   const nativeScanInProgressRef = useRef(false);
 
-  async function refreshBrowserStorage() {
-    try {
-      // IndexedDB writes/deletes may finish before the browser's quota
-      // estimate reflects the new usage. Wait briefly, then read the
-      // browser-managed estimate so the counter is less likely to show
-      // the previous value immediately after an upload or deletion.
-      await new Promise<void>((resolve) => window.setTimeout(resolve, 300));
-      const estimate = await readBrowserStorageEstimate();
-      setBrowserStorage(estimate);
-    } catch {
-      setBrowserStorage(null);
-    }
-  }
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => { setIsDesktop(Boolean(window.desktopBridge)); }, []);
 
@@ -865,67 +805,21 @@ export default function GuestNameExtractorPage() {
 
   useEffect(() => {
     let active = true;
-    void refreshBrowserStorage();
     async function restoreSession() {
       try {
-        const [storedFiles, savedStateText] = await Promise.all([
-          loadGuestFiles(),
-          Promise.resolve(localStorage.getItem(GUEST_STATE_KEY)),
-        ]);
-        if (!active) return;
-
-        // Re-parse saved Outlook MSG files. Older cached records may contain
-        // the raw OLE/binary bytes as text from before MSG parsing was enabled.
-        let migratedMsgFiles = false;
-        const savedFiles = await Promise.all(storedFiles.map(async (item) => {
-          if (item.extension?.toLowerCase() !== "msg") return item;
-          try {
-            const extracted = await extractText(item.file, "msg");
-            migratedMsgFiles = true;
-            return { ...item, content: extracted.content, pages: extracted.pages };
-          } catch {
-            return item;
-          }
-        }));
-        if (migratedMsgFiles) {
-          try { await saveGuestFiles(savedFiles); } catch { /* Keep the readable session data even if migration cannot be persisted. */ }
-        }
-        const savedState = savedStateText ? JSON.parse(savedStateText) : {};
+        const savedState = JSON.parse(localStorage.getItem(GUEST_STATE_KEY) || "{}");
         const savedNativePath = window.desktopBridge ? localStorage.getItem(NATIVE_FOLDER_KEY) || "" : "";
-        setFiles(savedFiles);
-        const savedArrivals = localStorage.getItem(ARRIVAL_REPORT_KEY);
-        if (savedArrivals) {
-          const parsed = JSON.parse(savedArrivals) as ArrivalRecord[];
-          if (Array.isArray(parsed)) setArrivals(parsed);
-          setArrivalStatus(parsed.length ? `تم استعادة ${parsed.length} حجز من تقرير الوصول المحفوظ.` : "");
-        }
-        void refreshBrowserStorage();
-        setFolderName(String(savedState.folderName || (savedFiles[0]?.path.split("/")[0] ?? "")));
-        const savedQuery = String(savedState.query || "");
-        setQuery(savedQuery);
-        const savedPage = Math.max(1, Number(savedState.currentPage) || 1);
-        setCurrentPage(savedPage);
-        if (savedState.selectedId) {
-          const item = savedFiles.find((file) => file.id === savedState.selectedId);
-          if (item) {
-            const q = normalize(savedQuery);
-            const matchedPages = item.pages.reduce<number[]>((acc, page, index) => {
-              if (normalize([item.name, item.path, item.company, page].join(" ")).includes(q)) acc.push(index + 1);
-              return acc;
-            }, []);
-            setSelected({ ...item, matchedPages: matchedPages.length ? matchedPages : [1] });
-            setCurrentPage(Math.min(savedPage, Math.max(1, item.pages.length)));
-          }
-        }
+        if (!active) return;
+        setFolderName(String(savedState.folderName || ""));
+        setQuery(String(savedState.query || ""));
+        setCurrentPage(Math.max(1, Number(savedState.currentPage) || 1));
         setNativeFolderPath(savedNativePath);
         setStorageMessage(savedNativePath
-          ? "تم استعادة مسار مجلد الحجوزات. جارٍ إعادة فهرسة الملفات من مكانها الأصلي..."
-          : savedFiles.length
-            ? `تم استعادة ${savedFiles.length.toLocaleString("en-US")} ملف من ذاكرة المتصفح.`
-            : "لا يوجد مجلد محفوظ حاليًا. اختر مجلد الحجوزات للبدء.");
+          ? "تم استعادة مسار مجلد الحجوزات. جارٍ قراءة الملفات الأصلية مباشرة..."
+          : "اختر مجلد الحجوزات للبدء. لا يتم إنشاء قاعدة بيانات أو حفظ نسخ من الملفات.");
         if (savedNativePath && window.desktopBridge) void scanNativeFolder(savedNativePath);
       } catch {
-        if (active) setStorageMessage("تعذرت استعادة المجلد المحفوظ. قد تكون بيانات الموقع قد مُسحت أو مساحة التخزين غير متاحة.");
+        if (active) setStorageMessage("تعذرت استعادة مسار مجلد الحجوزات. اختر المجلد مرة أخرى.");
       } finally {
         if (active) setRestoreComplete(true);
       }
@@ -965,13 +859,13 @@ export default function GuestNameExtractorPage() {
       const matchedPages = item.pages.reduce<number[]>((acc, page, index) => {
         const searchable = [item.name, item.path, item.company, page].join(" ");
         const matchesLinkedGuest = matchingArrivalNames.some((name) => arrivalNameMatchesText(name, searchable));
-        const matchesDirectQuery = !isArrivalNumberSearch && normalize(searchable).includes(q);
+        const matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, query);
         if (matchesDirectQuery || matchesLinkedGuest) {
           acc.push(index + 1);
         }
         return acc;
       }, []);
-      if (!isArrivalNumberSearch && normalize([item.name, item.path, item.company].join(" ")).includes(q) && !matchedPages.length) {
+      if (!isArrivalNumberSearch && matchesSearchText([item.name, item.path, item.company].join(" "), query) && !matchedPages.length) {
         matchedPages.push(1);
       }
       return matchedPages.length ? [{ ...item, matchedPages }] : [];
@@ -1071,13 +965,7 @@ export default function GuestNameExtractorPage() {
       } catch { failed.push(path); }
       setProgress({ done: index + 1, total: readable.length });
     }
-    try {
-      await saveGuestFiles(indexed);
-      await refreshBrowserStorage();
-      setStorageMessage(`تم حفظ ${indexed.length.toLocaleString("en-US")} ملف محليًا في المتصفح. لن تحتاج إلى اختيار المجلد بعد Refresh.`);
-    } catch {
-      setStorageMessage("تم فحص الملفات لهذه الجلسة، لكن تعذر حفظها بشكل دائم. قد تكون مساحة التخزين غير كافية.");
-    }
+    setStorageMessage(`تمت قراءة ${indexed.length.toLocaleString("en-US")} ملف لهذه الجلسة فقط. لا يتم حفظ الملفات أو إنشاء قاعدة بيانات.`);
     setFiles(indexed); setWarnings(failed); setBusy(false);
     if (!readable.length) setError("لم أجد ملفات مدعومة داخل المجلد. الملفات المدعومة: PDF وWord DOCX وOutlook MSG وTXT وCSV وXML.");
     else if (!indexed.length) setError("تعذرت قراءة الملفات المحددة. تحقق من سلامة الملفات ثم حاول مرة أخرى.");
@@ -1324,24 +1212,18 @@ export default function GuestNameExtractorPage() {
   }
 
   async function removeSavedFolder() {
-    if (!window.confirm("هل تريد حذف نسخة المجلد المحفوظة من هذا المتصفح؟ لن يتم حذف الملفات الأصلية من جهازك.")) return;
-    try {
-      await clearGuestFiles();
-      await window.desktopBridge?.unwatchFolder();
-      await refreshBrowserStorage();
-      localStorage.removeItem(GUEST_STATE_KEY);
-      setFiles([]);
-      setQuery("");
-      setSelected(null);
-      setCurrentPage(1);
-      setFolderName("");
-      setNativeFolderPath("");
-      localStorage.removeItem(NATIVE_FOLDER_KEY);
-      setWarnings([]);
-      setStorageMessage("تم حذف المجلد المحفوظ من المتصفح.");
-    } catch {
-      setStorageMessage("تعذر حذف المجلد المحفوظ. حاول مرة أخرى.");
-    }
+    if (!window.confirm("هل تريد إلغاء ربط مجلد الحجوزات؟ لن يتم حذف الملفات الأصلية من جهازك.")) return;
+    await window.desktopBridge?.unwatchFolder();
+    setFiles([]);
+    setQuery("");
+    setSelected(null);
+    setCurrentPage(1);
+    setFolderName("");
+    setNativeFolderPath("");
+    localStorage.removeItem(NATIVE_FOLDER_KEY);
+    localStorage.removeItem(GUEST_STATE_KEY);
+    setWarnings([]);
+    setStorageMessage("تم إلغاء ربط مجلد الحجوزات. الملفات الأصلية لم يتم تغييرها.");
   }
 
   function printMsgImage(attachment: MsgAttachmentPreview) {
@@ -1564,26 +1446,10 @@ export default function GuestNameExtractorPage() {
 
   return (
     <div className="page" dir="rtl">
-      <div
-        title="المساحة المستخدمة من حصة التخزين التي يخصصها المتصفح لهذا الموقع"
-        aria-label={browserStorage ? `استخدام التخزين: ${formatStorageMB(browserStorage.usage)} من ${formatStorageMB(browserStorage.quota)}` : "تعذر قراءة سعة التخزين"}
-        style={{
-          position: "fixed", top: 8, left: 10, zIndex: 1000,
-          padding: "4px 7px", borderRadius: 6,
-          background: "rgba(255,255,255,0.92)", border: "1px solid #d7dee8",
-          color: "#526174", fontSize: 10, lineHeight: 1.2,
-          direction: "ltr", fontVariantNumeric: "tabular-nums",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.08)",
-        }}
-      >
-        {browserStorage
-          ? `${formatStorageMB(browserStorage.usage)} / ${formatStorageMB(browserStorage.quota)}`
-          : "Storage: N/A"}
-      </div>
       <header className="hero">
         <p className="eyebrow">Long Beach Resort · Hotel Tools</p>
         <h1>Guest Name Extractor</h1>
-        <p>ابحث داخل ملفات الحجوزات، اعرض المستند الأصلي واطبعه، واستخرج أسماء النزلاء وتواريخ الميلاد من الصفحة المعروضة.</p>
+        <p>ابحث عن ملف الحجز برقم الحجز أو الرقم التأكيدي أو اسم النزيل أو الشركة، واستخرج أسماء جميع النزلاء وتواريخ ميلادهم تلقائياً.</p>
       </header>
       <section className="panel">
         <div className="section-heading">
@@ -1654,9 +1520,7 @@ export default function GuestNameExtractorPage() {
               {(() => {
                 // Preview extracted guests for every company using the same
                 // company-specific parser used by the document preview.
-                const pagesToParse = item.matchedPages.length
-                  ? item.matchedPages.map((pageNumber) => item.pages[pageNumber - 1]).filter(Boolean)
-                  : [item.pages[0] || ""];
+                const pagesToParse = item.pages.length ? item.pages : [item.content || ""];
                 const guests = pagesToParse.flatMap((pageText) =>
                   extractPeople(pageText, query, item.company),
                 );
