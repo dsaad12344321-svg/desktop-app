@@ -20,6 +20,23 @@ function log(message) {
   } catch (_) {}
 }
 
+function sendToMainWindow(channel, ...args) {
+  const window = mainWindow;
+  if (!window || window.isDestroyed()) return false;
+
+  const contents = window.webContents;
+  if (contents.isDestroyed() || contents.isLoadingMainFrame()) return false;
+
+  try {
+    contents.send(channel, ...args);
+    return true;
+  } catch (error) {
+    log("Unable to send renderer event (" + channel + "): " +
+      (error && error.message ? error.message : String(error)));
+    return false;
+  }
+}
+
 function getFreePort() {
   return new Promise((resolve, reject) => {
     const server = net.createServer();
@@ -183,16 +200,12 @@ function registerSafeDesktopApi() {
       folderWatcher = fs.watch(root, { recursive: true }, () => {
         if (folderWatchTimer) clearTimeout(folderWatchTimer);
         folderWatchTimer = setTimeout(() => {
-          if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send("desktop:folder-changed");
-          }
+          sendToMainWindow("desktop:folder-changed");
         }, 1800);
       });
       folderWatcher.on("error", error => {
         log("Folder watcher error: " + error.message);
-        if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send("desktop:folder-watch-error", error.message);
-        }
+        sendToMainWindow("desktop:folder-watch-error", error.message);
       });
       return true;
     } catch (error) {
