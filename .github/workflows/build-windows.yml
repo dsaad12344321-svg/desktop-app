@@ -1,0 +1,42 @@
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "electron/**"
+      - "types/**"
+      - "package.json"
+      - "next.config.ts"
+      - ".github/workflows/build-windows.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build desktop installer
+        run: npm run desktop:dist
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Long-Beach-Hotel-Assistant-Windows-x64
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 14
