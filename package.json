@@ -9,8 +9,8 @@
     "build": "next build",
     "start": "next start",
     "desktop:dev": "electron .",
-    "desktop:dist": "npm run build && electron-builder --win nsis",
-    "desktop:dist:dir": "npm run build && electron-builder --win dir"
+    "desktop:dist": "npm run build && electron-builder --win nsis --publish never",
+    "desktop:dist:dir": "npm run build && electron-builder --win dir --publish never"
   },
   "dependencies": {
     "@kenjiuno/msgreader-web-ng": "^0.3.0-alpha1",
