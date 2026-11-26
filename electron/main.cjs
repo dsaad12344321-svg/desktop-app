@@ -116,7 +116,7 @@ function registerSafeDesktopApi() {
   }));
 
   ipcMain.handle("desktop:select-files", async (_event, options = {}) => {
-    const allowed = ["xml", "xlsx", "xls", "pdf", "msg", "docx", "doc", "txt", "csv"];
+    const allowed = ["xml", "xlsx", "xls", "pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "msg", "docx", "doc", "txt", "csv"];
     const requested = Array.isArray(options.extensions)
       ? options.extensions.filter(ext => allowed.includes(String(ext).replace(/^\./, "").toLowerCase()))
       : allowed;
@@ -141,7 +141,7 @@ function registerSafeDesktopApi() {
     const root = path.resolve(rootPath);
     const rootStat = await fs.promises.stat(root);
     if (!rootStat.isDirectory()) throw new Error("The selected path is not a folder.");
-    const allowed = new Set(["pdf", "docx", "msg", "txt", "csv", "xml", "html", "htm", "eml", "log"]);
+    const allowed = new Set(["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "docx", "msg", "txt", "csv", "xml", "html", "htm", "eml", "log"]);
     const results = [];
     const queue = [root];
     const maxFiles = 20000;

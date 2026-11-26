@@ -15,7 +15,7 @@ type MsgPreviewData = { subject: string; sender: string; senderEmail: string; to
 
 const NATIVE_FOLDER_KEY = "long-beach-native-reservation-folder-v1";
 const GUEST_STATE_KEY = "nationality-guest-extractor-state-v1";
-const SUPPORTED = new Set(["pdf", "docx", "msg", "txt", "csv", "xml", "html", "htm", "eml", "log"]);
+const SUPPORTED = new Set(["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "docx", "msg", "txt", "csv", "xml", "html", "htm", "eml", "log"]);
 const normalize = (value: string) =>
   value.toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
@@ -84,6 +84,10 @@ function getNativeFolderMetadata(relativePath: string): { company: string; day?:
 }
 
 async function extractText(file: File, extension: string): Promise<{ content: string; pages: string[] }> {
+  // Images are indexed by filename and previewed directly; OCR is not attempted here.
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"].includes(extension)) {
+    return { content: "", pages: [""] };
+  }
   if (["txt", "csv", "xml", "html", "htm", "eml", "log"].includes(extension)) {
     const content = await file.text();
     return { content, pages: [content] };
@@ -1014,21 +1018,24 @@ export default function GuestNameExtractorPage() {
     window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 
-  function openOriginalMsgInOutlook() {
+  async function openOriginalMsgInOutlook() {
     if (!selected || selected.extension.toLowerCase() !== "msg") return;
-    // Ask the browser/OS to handle the untouched MSG blob in a new tab.
-    // Whether this launches Outlook depends on browser and Windows file associations.
-    const outlookBlob = new Blob([selected.file], { type: "application/vnd.ms-outlook" });
-    const url = URL.createObjectURL(outlookBlob);
-    const opened = window.open(url, "_blank", "noopener,noreferrer");
-    if (!opened) {
-      URL.revokeObjectURL(url);
-      downloadOriginalMsg();
-      setStorageMessage("منع المتصفح فتح نافذة جديدة؛ تم بدء تنزيل ملف MSG الأصلي بدلاً من ذلك.");
+    // In the desktop app, open the original file path through Windows file associations.
+    // This allows Outlook (if installed and associated with .msg) to open the real file.
+    if (window.desktopBridge && selected.path.startsWith("\\\\" ) || window.desktopBridge && /^[a-zA-Z]:[\\/]/.test(selected.path)) {
+      try {
+        const opened = await window.desktopBridge.openPath(selected.path);
+        setStorageMessage(opened
+          ? "تم إرسال ملف Outlook الأصلي إلى Windows لفتحه بالتطبيق المرتبط بملفات MSG."
+          : "تعذر فتح الملف تلقائياً. تأكد من تثبيت Outlook وارتباط ملفات MSG به، أو استخدم زر تنزيل الملف الأصلي.");
+      } catch {
+        setStorageMessage("تعذر فتح ملف MSG في Outlook. استخدم زر تنزيل الملف الأصلي.");
+      }
       return;
     }
-    window.setTimeout(() => URL.revokeObjectURL(url), 5 * 60_000);
-    setStorageMessage("تم إرسال ملف MSG الأصلي إلى المتصفح لمحاولة فتحه. إذا لم يفتح Outlook، استخدم زر تنزيل الملف الأصلي.");
+    // Browser fallback: download the untouched message for opening in Outlook.
+    downloadOriginalMsg();
+    setStorageMessage("تم تنزيل ملف MSG الأصلي. افتحه باستخدام Outlook إذا كان مثبتاً على جهازك.");
   }
 
   async function removeSavedFolder() {
@@ -1463,7 +1470,11 @@ export default function GuestNameExtractorPage() {
           <div style={{ border: "1px solid #d7dee8", borderRadius: 10, overflow: "hidden", background: "#f3f5f7" }}>
             {selected.extension === "pdf" ? <iframe title="معاينة ملف PDF" src={previewUrl + "#page=" + currentPage + "&toolbar=1"}
               style={{ width: "100%", height: "75vh", maxHeight: 850, minHeight: 560, border: 0 }} /> :
-              <pre style={{ whiteSpace: "pre-wrap", overflow: "auto", maxHeight: 600, padding: 18, direction: "rtl", background: "white" }}>{pageText || "لا يوجد نص قابل للعرض."}</pre>}
+              ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"].includes(selected.extension) ? (
+                <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: 420, maxHeight: "75vh", overflow: "auto", padding: 16, background: "#e9edf2" }}>
+                  <img src={previewUrl} alt={selected.name} style={{ display: "block", maxWidth: "100%", maxHeight: "72vh", objectFit: "contain", background: "white", boxShadow: "0 2px 12px rgba(0,0,0,.12)" }} />
+                </div>
+              ) : <pre style={{ whiteSpace: "pre-wrap", overflow: "auto", maxHeight: 600, padding: 18, direction: "rtl", background: "white" }}>{pageText || "لا يوجد نص قابل للعرض."}</pre>}
           </div>
         )}
           {diagnosticStatus && <p className="saved-hint" role="status">{diagnosticStatus}</p>}
