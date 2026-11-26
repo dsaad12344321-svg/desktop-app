@@ -6,7 +6,7 @@ This repository is independent. The original `nationality` repository and its Ve
 
 ## First milestone
 
-The initial desktop prototype packages the existing Next.js application and its API routes inside Electron. The Next.js server runs locally on the user's computer and the desktop window connects only to `127.0.0.1`. The first milestone is to validate the existing Nationality Report and local application startup before adding more Windows integrations.
+The initial desktop prototype packages the existing Next.js application and its API routes inside Electron. The Next.js server runs locally on the user's computer and the desktop window connects only to `127.0.0.1`. The Guest Name Extractor now supports linking a real Windows folder, indexing supported files directly from their original location, remembering that folder between launches, and watching for changes where Windows supports recursive folder notifications. A manual rescan remains available as a fallback for network shares or filesystems that do not emit watcher events.
 
 ## Included application features
 
@@ -27,7 +27,7 @@ The transferred tools need to be regression-tested in the desktop environment be
 
 - **Next.js / React:** existing hotel tools and interface.
 - **Electron:** Windows desktop shell.
-- **Preload + IPC:** small allowlisted bridge for native file/folder dialogs.
+- **Preload + IPC:** allowlisted bridge for native file/folder dialogs, listing supported files, reading files inside the selected root, opening a file location, and watching folder changes.
 - **Local Next.js server:** preserves API routes and supports offline use after installation.
 - **Outlook Classic:** planned as a separate Windows integration; not yet connected in this first prototype.
 
@@ -71,7 +71,8 @@ A Windows installer can also be built from GitHub Actions using **Actions → Bu
 ## Roadmap
 
 1. Validate the local Electron + Next.js prototype and Nationality Report.
-2. Add safe native file reading, writing, copy, move, and rename workflows.
-3. Add Outlook Classic integration for searching messages and exporting attachments.
+2. Extend the native reservation index with incremental indexing and robust network-share monitoring.
+3. Add Outlook Classic integration for searching the signed-in Outlook profile and reading/printing messages and attachments.
+4. Add OCR for scanned PDF/image vouchers.
 4. Bring the remaining hotel tools into the unified desktop navigation.
 5. Add signed releases and a controlled update mechanism.
