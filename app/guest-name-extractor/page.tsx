@@ -1459,7 +1459,7 @@ export default function GuestNameExtractorPage() {
             {busy ? "جارٍ فحص المجلد..." : isDesktop ? (nativeFolderPath ? "تغيير مجلد الحجوزات" : "ربط مجلد Windows") : "اختيار مجلد"}
           </button>
           {isDesktop && nativeFolderPath && <button type="button" className="add-button" onClick={() => void scanNativeFolder(nativeFolderPath)} disabled={busy}>فحص التحديثات</button>}
-          {files.length > 0 && <button type="button" className="add-button" onClick={() => void removeSavedFolder()} disabled={busy}>حذف المجلد المحفوظ</button>}
+          {files.length > 0 && <button type="button" className="add-button" onClick={() => void removeSavedFolder()} disabled={busy}>إلغاء ربط المجلد</button>}
           <button type="button" className="add-button" onClick={() => arrivalInputRef.current?.click()} disabled={arrivalBusy}>
             {arrivalBusy ? "جارٍ قراءة التقرير..." : arrivals.length ? "استبدال تقرير arr.pdf" : "رفع تقرير arr.pdf"}
           </button>
@@ -1520,10 +1520,10 @@ export default function GuestNameExtractorPage() {
               {(() => {
                 // Preview extracted guests for every company using the same
                 // company-specific parser used by the document preview.
-                const pagesToParse = item.pages.length ? item.pages : [item.content || ""];
-                const guests = pagesToParse.flatMap((pageText) =>
-                  extractPeople(pageText, query, item.company),
-                );
+                const peopleSource = /alltour/i.test(item.company)
+                  ? item.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
+                  : item.pages.join("\n\n");
+                const guests = extractPeople(peopleSource || item.content || "", query, item.company);
                 const uniqueGuests = guests.filter((person, index, all) =>
                   all.findIndex((candidate) =>
                     normalize(candidate.name) === normalize(person.name)
