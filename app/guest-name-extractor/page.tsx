@@ -794,6 +794,7 @@ export default function GuestNameExtractorPage() {
   const [warnings, setWarnings] = useState<string[]>([]);
   const [folderName, setFolderName] = useState("");
   const [nativeFolderPath, setNativeFolderPath] = useState("");
+  const [isDesktop, setIsDesktop] = useState(false);
   const [selected, setSelected] = useState<SearchResult | null>(null);
   const [msgPreview, setMsgPreview] = useState<MsgPreviewData | null>(null);
   const [msgPreviewError, setMsgPreviewError] = useState("");
@@ -828,6 +829,8 @@ export default function GuestNameExtractorPage() {
     }
   }
   const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { setIsDesktop(Boolean(window.desktopBridge)); }, []);
+
   useEffect(() => {
     let active = true;
     void refreshBrowserStorage();
@@ -1542,9 +1545,9 @@ export default function GuestNameExtractorPage() {
           <div><h2>1. اختيار مجلد الحجوزات بالكامل</h2>
             <p className="muted">اربط مجلد الحجوزات الأصلي مرة واحدة. في نسخة Windows تتم قراءة الملفات مباشرة من مكانها دون رفعها أو نسخها إلى ذاكرة المتصفح.</p></div>
           <button type="button" className="add-button" onClick={() => void chooseNativeFolder()} disabled={busy}>
-            {busy ? "جارٍ فحص المجلد..." : window.desktopBridge ? (nativeFolderPath ? "تغيير مجلد الحجوزات" : "ربط مجلد Windows") : "اختيار مجلد"}
+            {busy ? "جارٍ فحص المجلد..." : isDesktop ? (nativeFolderPath ? "تغيير مجلد الحجوزات" : "ربط مجلد Windows") : "اختيار مجلد"}
           </button>
-          {window.desktopBridge && nativeFolderPath && <button type="button" className="add-button" onClick={() => void scanNativeFolder(nativeFolderPath)} disabled={busy}>فحص التحديثات</button>}
+          {isDesktop && nativeFolderPath && <button type="button" className="add-button" onClick={() => void scanNativeFolder(nativeFolderPath)} disabled={busy}>فحص التحديثات</button>}
           {files.length > 0 && <button type="button" className="add-button" onClick={() => void removeSavedFolder()} disabled={busy}>حذف المجلد المحفوظ</button>}
           <button type="button" className="add-button" onClick={() => arrivalInputRef.current?.click()} disabled={arrivalBusy}>
             {arrivalBusy ? "جارٍ قراءة التقرير..." : arrivals.length ? "استبدال تقرير arr.pdf" : "رفع تقرير arr.pdf"}
