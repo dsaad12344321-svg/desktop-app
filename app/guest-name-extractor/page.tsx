@@ -832,6 +832,17 @@ export default function GuestNameExtractorPage() {
   useEffect(() => { setIsDesktop(Boolean(window.desktopBridge)); }, []);
 
   useEffect(() => {
+    if (!isDesktop || !nativeFolderPath || !window.desktopBridge) return;
+    const unsubscribe = window.desktopBridge.onFolderChanged(() => {
+      void scanNativeFolder(nativeFolderPath);
+    });
+    return () => {
+      unsubscribe();
+      void window.desktopBridge?.unwatchFolder();
+    };
+  }, [isDesktop, nativeFolderPath]);
+
+  useEffect(() => {
     let active = true;
     void refreshBrowserStorage();
     async function restoreSession() {
@@ -1084,7 +1095,7 @@ export default function GuestNameExtractorPage() {
         const extension = entry.name.split(".").pop()?.toLowerCase() || "";
         try {
           const bytes = await window.desktopBridge.readFile(rootPath, entry.path);
-          const file = new File([bytes], entry.name, { lastModified: entry.mtimeMs });
+          const file = new File([bytes.slice().buffer as ArrayBuffer], entry.name, { lastModified: entry.mtimeMs });
           const extracted = await extractText(file, extension);
           const folderMetadata = getFolderMetadata(entry.relativePath);
           indexed.push({
