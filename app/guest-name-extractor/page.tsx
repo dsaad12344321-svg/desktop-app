@@ -571,12 +571,14 @@ function extractPeople(text: string, searchTerm: string, company = "") {
         if (!groupsByVoucher.has(voucher)) { groupsByVoucher.set(voucher, current); groups.push(current); }
       }
       if (!current) continue;
-      const rawName = guestMatch[2]
-        .replace(/\s+(?:ARR\+?|NEW|CHANGED)\b.*$/i, "")
-        .replace(/\s+(?:SINGLE|DOUBLE|TRIPLE|QUAD)\s+ROOM\b.*$/i, "")
+      // Only read DOB from the guest cell before the ARR/status column.
+      // Dates later on the line are arrival/departure dates and must not be used as DOB.
+      const guestCell = guestMatch[2].replace(/\s+(?:ARR\+?|NEW|CHANGED)\b.*$/i, "")
+        .replace(/\s+(?:SINGLE|DOUBLE|TRIPLE|QUAD)\s+ROOM\b.*$/i, "").trim();
+      const dobMatch = guestCell.match(/\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b/);
+      const rawName = guestCell.replace(/\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g, "")
         .replace(/\s+/g, " ").replace(/^[,\s]+|[,\s]+$/g, "").replace(/,/g, " ").trim();
       if (!rawName || /^(?:SURNAME NAME|NAME|AGE)$/i.test(rawName)) continue;
-      const dobMatch = line.match(/\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b/);
       current.people.push({ name: titleCaseName(rawName), dob: dobMatch ? dobMatch[1].replace(/[/-]/g, ".") : "لم يُعثر عليه" });
     }
 
