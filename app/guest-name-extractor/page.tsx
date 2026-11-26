@@ -916,9 +916,23 @@ export default function GuestNameExtractorPage() {
       ? selected.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
       : selected.pages.join("\n\n")
     : "";
+  // When the search is a room or confirmation number, use the linked guest name
+  // as the parser query. Passing the numeric identifier to a voucher parser can
+  // make it match an unrelated number in the page and return a stray row.
+  const arrivalSearchQuery = useMemo(() => {
+    const q = normalize(query).replace(/\s+/g, "");
+    if (!q) return "";
+    const linked = arrivals.filter((item) =>
+      normalize(item.roomNo).replace(/\s+/g, "") === q
+      || normalize(item.confirmationNo).replace(/\s+/g, "") === q
+    );
+    return linked.map((item) => item.name).filter(Boolean).join(" ");
+  }, [arrivals, query]);
+
+  const effectivePeopleQuery = arrivalSearchQuery || query;
   const extractedPeople = useMemo(
-    () => extractPeople(peopleSourceText, query, selected?.company || ""),
-    [peopleSourceText, query, selected?.company],
+    () => extractPeople(peopleSourceText, effectivePeopleQuery, selected?.company || ""),
+    [peopleSourceText, effectivePeopleQuery, selected?.company],
   );
 
   async function uploadArrivalReport(selectedFiles: FileList | null) {
