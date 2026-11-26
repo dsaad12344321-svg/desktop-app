@@ -366,8 +366,79 @@ function extractEaglePeople(text: string) {
   return names.map((name, index) => ({ name, dob: dates[index] }));
 }
 
+function extractTravelWaysPeople(text: string, searchTerm: string) {
+  // Travel Ways sends a HOTEL CONTRACT EBD LIST PDF. The first guest row
+  // starts with Operator + Voucher + room sequence; additional guests in the
+  // same booking are printed on following indented rows without repeating
+  // the voucher number. Keep those continuation rows with their booking.
+  type BookingGroup = { voucher: string; people: { name: string; dob: string }[] };
+  const groups: BookingGroup[] = [];
+  let current: BookingGroup | null = null;
+
+  const parseGuestRow = (line: string) => {
+    const match = line.match(
+      /^\\s*(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF)\\.?\\s+(.+?)\\s+(\\d{1,2}[./-]\\d{1,2}[./-]\\d{2,4})(?=\\s|$)/i,
+    );
+    if (!match) return null;
+    const name = match[1].replace(/\\s+/g, " ").trim();
+    if (!name || /^(?:surname,? name|total pax|total room)$/i.test(name)) return null;
+    return { name: titleCaseName(name), dob: match[2].replace(/[/-]/g, ".") };
+  };
+
+  for ((const rawLine of text.split(/\\r?\\n/)) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const bookingStart = line.match(/^([A-Z][A-Z0-9_-]{1,12})\\s+([A-Z0-9-]{5,})\\s+\\d+\\s+(.+)$/i);
+    if (bookingStart) {
+      if (current?.people.length) groups.push(current);
+      current = { voucher: bookingStart[2], people: [] };
+      const firstGuest = parseGuestRow(bookingStart[3]);
+      if (firstGuest) current.people.push(firstGuest);
+      continue;
+    }
+
+    if (!current) continue;
+    const continuationGuest = parseGuestRow(line);
+    if (continuationGuest) {
+      current.people.push(continuationGuest);
+      continue;
+    }
+
+    // Totals, notes and the next date section are not guest rows.
+    if (/^(?:\\d{1,2}[./-]\\d{1,2}[./-]\\d{4}\\s+Totals|Total\\s+(?:Pax|Room)\\s*:|NOTE:)/i.test(line)) {
+      if (current.people.length) groups.push(current);
+      current = null;
+    }
+  }
+  if (current?.people.length) groups.push(current);
+
+  const query = normalize(searchTerm);
+  if (!query) return groups.flatMap((group) => group.people);
+  const compactQuery = query.replace(/\\s+/g, "");
+  const nameTokens = query.split(/\\s+/).filter(
+    (token) => token.length > 1 && !/^(?:mr|mrs|ms|miss|mstr|master|chd|child|inf)$/i.test(token),
+  );
+  const matchingGroups = groups.filter((group) => {
+    const voucher = normalize(group.voucher).replace(/\\s+/g, "");
+    if (compactQuery === voucher) return true;
+    return group.people.some((person) => {
+      const name = normalize(person.name);
+      return name.includes(query) || (nameTokens.length > 0 && nameTokens.every((token) => name.includes(token)));
+    });
+  });
+  return matchingGroups.flatMap((group) => group.people);
+}
+
 function extractPeople(text: string, searchTerm: string, company = "") {
   company = detectVoucherCompany(text, company);
+  const isTravelWaysReport = /travel\\s*ways/i.test(company)
+    || (/HOTEL\\s+CONTRACT\\s+EBD\\s+LIST/i.test(text)
+      && /\\bOperator\\b[\\s\\S]{0,250}\\bVoucher\\b/i.test(text));
+  if (isTravelWaysReport) {
+    const travelWaysPeople = extractTravelWaysPeople(text, searchTerm);
+    if (travelWaysPeople.length) return travelWaysPeople;
+  }
   // Eagle Travel rooming lists are sent as Outlook email tables with surname/given-name
   // entries in the Names column and matching two-digit DOBs in the Age column.
   const hasEagleRoomingTable = /\bNames\b[\s\S]{0,200}\bAge\b[\s\S]{0,100}\bACC\b/i.test(text);
