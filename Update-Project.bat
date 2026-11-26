@@ -7,63 +7,39 @@ echo ==========================================
 echo   Update Long Beach Hotel Assistant
 echo ==========================================
 echo.
+echo This updater works with both Download ZIP folders and Git clones.
+echo It downloads the latest main branch and preserves node_modules.
+echo.
 
-where git >nul 2>&1
+where powershell >nul 2>&1
 if errorlevel 1 (
-  echo ERROR: Git was not found.
-  echo Install Git for Windows, then run this file again:
-  echo https://git-scm.com/download/win
-  echo.
+  echo ERROR: Windows PowerShell was not found.
   pause
   exit /b 1
 )
 
-git rev-parse --is-inside-work-tree >nul 2>&1
-if errorlevel 1 (
-  echo ERROR: This folder is not a Git clone.
-  echo.
-  echo Clone the repository from GitHub first, then place this
-  echo Update-Project.bat inside the cloned project folder.
-  echo Do not use this file from a ZIP-extracted folder.
-  echo.
+if not exist "%~dp0Update-Project.ps1" (
+  echo ERROR: Update-Project.ps1 is missing.
+  echo Download both updater files from the repository.
   pause
   exit /b 1
 )
 
-for /f "delims=" %%i in ('git rev-parse HEAD') do set "OLD_COMMIT=%%i"
-
-echo Checking GitHub for updates...
-git pull --ff-only origin main
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File "%~dp0Update-Project.ps1"
 if errorlevel 1 (
   echo.
-  echo UPDATE FAILED.
-  echo If you have local code changes, save or commit them first.
-  echo No files in node_modules were intentionally removed.
+  echo UPDATE FAILED. Your existing node_modules was not intentionally removed.
+  echo Review the error above, then try again.
   echo.
   pause
   exit /b 1
-)
-
-git diff --quiet "%OLD_COMMIT%" HEAD -- package.json package-lock.json
-if errorlevel 1 (
-  echo.
-  echo Dependency files changed. Updating installed packages...
-  call npm install
-  if errorlevel 1 (
-    echo.
-    echo npm install failed. Check your internet connection and try again.
-    pause
-    exit /b 1
-  )
-) else (
-  echo.
-  echo Dependencies have not changed. Keeping the existing node_modules.
 )
 
 echo.
 echo ==========================================
-echo   Project is up to date!
+echo   Update completed successfully!
 echo ==========================================
 echo You can now run Start-Developer-Mode.bat.
 echo.
 pause
+endlocal
