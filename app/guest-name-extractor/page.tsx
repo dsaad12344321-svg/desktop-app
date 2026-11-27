@@ -1679,6 +1679,7 @@ export default function GuestNameExtractorPage() {
   const [msgPreview, setMsgPreview] = useState<MsgPreviewData | null>(null);
   const [msgPreviewError, setMsgPreviewError] = useState("");
   const [autoOpenMtsVoucher, setAutoOpenMtsVoucher] = useState(false);
+  const [mtsPrintRequest, setMtsPrintRequest] = useState<{ item: IndexedFile; pageInput: string } | null>(null);
   const [activeAttachment, setActiveAttachment] = useState<MsgAttachmentPreview | null>(null);
   const [attachmentSearchQuery, setAttachmentSearchQuery] = useState("");
   const [attachmentSearchMatches, setAttachmentSearchMatches] = useState<AttachmentSearchMatch[]>([]);
@@ -2249,12 +2250,11 @@ export default function GuestNameExtractorPage() {
     openPreview(item);
   }
 
-  async function printMtsVoucher(item: IndexedFile, defaultPageNumber = 1) {
-    const pageInput = window.prompt(
-      "رقم الصفحة المطابقة للحجز من Guest Voucher (يمكنك تعديله إذا لزم الأمر):",
-      String(defaultPageNumber),
-    );
-    if (pageInput === null) return;
+  function printMtsVoucher(item: IndexedFile, defaultPageNumber = 1) {
+    setMtsPrintRequest({ item, pageInput: String(defaultPageNumber) });
+  }
+
+  async function executeMtsVoucherPrint(item: IndexedFile, pageInput: string) {
     const pageNumber = Number(pageInput.trim());
     if (!Number.isInteger(pageNumber) || pageNumber < 1) {
       window.alert("يرجى إدخال رقم صفحة صحيح يبدأ من 1.");
@@ -2927,6 +2927,25 @@ export default function GuestNameExtractorPage() {
           {diagnosticStatus && <p className="saved-hint" role="status">{diagnosticStatus}</p>}
           <p className="saved-hint">تنبيه: قد تتضمن البيانات المنسوخة أسماء النزلاء وأرقام جوازات السفر؛ راجعها واحذف أي بيانات لا ترغب في مشاركتها قبل إرسالها.</p>
       </section>}
+
+      {mtsPrintRequest && <div role="dialog" aria-modal="true" aria-labelledby="mts-print-title"
+        style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <section className="panel" style={{ width: "min(100%, 440px)", margin: 0, boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+          <h2 id="mts-print-title" style={{ marginTop: 0 }}>اختيار صفحة الفاوتشر للطباعة</h2>
+          <p className="muted">أدخل رقم الصفحة المطابقة للحجز من Guest Voucher. يمكنك تعديل الرقم المقترح.</p>
+          <label htmlFor="mts-print-page" style={{ display: "grid", gap: 6 }}>رقم الصفحة
+            <input id="mts-print-page" type="number" min="1" step="1" autoFocus
+              value={mtsPrintRequest.pageInput}
+              onChange={(event) => setMtsPrintRequest((current) => current ? { ...current, pageInput: event.target.value } : null)}
+              onKeyDown={(event) => { if (event.key === "Enter") void executeMtsVoucherPrint(mtsPrintRequest.item, mtsPrintRequest.pageInput); }}
+              style={{ minHeight: 42, border: "1px solid #cbd6e2", borderRadius: 8, padding: "8px 12px", font: "inherit" }} />
+          </label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+            <button type="button" className="add-button" onClick={() => setMtsPrintRequest(null)}>إلغاء</button>
+            <button type="button" className="add-button" onClick={() => void executeMtsVoucherPrint(mtsPrintRequest.item, mtsPrintRequest.pageInput)}>متابعة الطباعة</button>
+          </div>
+        </section>
+      </div>}
 
       {warnings.length > 0 && <section className="panel"><h2>ملفات تعذرت قراءتها</h2>
         <ul className="steps">{warnings.map((path) => <li key={path} dir="ltr">{path}</li>)}</ul></section>}
