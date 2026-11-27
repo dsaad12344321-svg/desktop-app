@@ -1160,6 +1160,13 @@ function isW2mIndexedFile(file: Pick<IndexedFile, "company" | "content" | "pages
     || /noreply@w2m\.com|world\s*2\s*meet|world2meet/i.test([file.content, ...file.pages].join(" "));
 }
 
+function isMtsIndexedFile(file: Pick<IndexedFile, "company" | "content" | "pages" | "name" | "path"> | null | undefined) {
+  if (!file) return false;
+  const company = normalize(file.company);
+  const searchable = [file.name, file.path, file.content, ...file.pages].join(" ");
+  return company === "mts" || company.startsWith("mts globe") || /\bmts\s*globe\b|mtsglobe/i.test(searchable);
+}
+
 function isSunInternationalIndexedFile(file: SunIndexedFile | null | undefined) {
   if (!file) return false;
   const company = normalize(file.company);
@@ -1195,6 +1202,35 @@ function extractPeopleForMultipleView(
 ) {
   const isMsg = file.extension.toLowerCase() === "msg";
   const isSun = isSunInternationalIndexedFile(file);
+  const isMts = isMtsIndexedFile(file);
+
+  if (isMts) {
+    // MTS bookings commonly arrive as Outlook MSG files with voucher PDFs.
+    // Search the attached voucher pages for the requested booking reference
+    // or guest before extracting, so unrelated bookings in a batch are ignored.
+    const sourcePages = isMsg
+      ? file.pages.slice(1).filter((page) => page.trim())
+      : (file.visualPages?.length ? file.visualPages : file.pages).filter((page) => page.trim());
+    const compactQuery = normalize(searchTerm).replace(/\s+/g, "");
+    const queryIsNumeric = /^\d{5,12}$/.test(compactQuery);
+    const hasBookingReference = (page: string) => {
+      const references = Array.from(page.matchAll(
+        /\b(?:booking|reservation|confirmation)\s*(?:number|no\.?|reference|ref\.?|#)?\s*[:#-]?\s*([A-Z0-9-]{5,})/gi,
+      ), (match) => normalize(match[1]).replace(/\s+/g, ""));
+      return references.includes(compactQuery);
+    };
+    let matchingPages = sourcePages.filter((page) => {
+      if (!searchTerm.trim()) return true;
+      if (queryIsNumeric) return hasBookingReference(page);
+      return matchesSearchText(page, searchTerm) || arrivalNameMatchesText(searchTerm, page);
+    });
+    if (!matchingPages.length && isMsg && queryIsNumeric && hasBookingReference(file.pages[0] || "")) {
+      matchingPages = sourcePages;
+    }
+    return matchingPages.flatMap((page) =>
+      extractPeople(page, queryIsNumeric ? "" : searchTerm, file.company, enableSunCheckInList),
+    );
+  }
 
   if (isSun) {
     const sourcePages = isMsg
@@ -1319,6 +1355,7 @@ export default function GuestNameExtractorPage() {
   const [selected, setSelected] = useState<SearchResult | null>(null);
   const [msgPreview, setMsgPreview] = useState<MsgPreviewData | null>(null);
   const [msgPreviewError, setMsgPreviewError] = useState("");
+  const [autoOpenMtsVoucher, setAutoOpenMtsVoucher] = useState(false);
   const [activeAttachment, setActiveAttachment] = useState<MsgAttachmentPreview | null>(null);
   const [attachmentSearchQuery, setAttachmentSearchQuery] = useState("");
   const [attachmentSearchMatches, setAttachmentSearchMatches] = useState<AttachmentSearchMatch[]>([]);
@@ -1326,6 +1363,23 @@ export default function GuestNameExtractorPage() {
   const [activeAttachmentPage, setActiveAttachmentPage] = useState(1);
   const [attachmentPdfSearchTerm, setAttachmentPdfSearchTerm] = useState("");
   useEffect(() => () => { msgPreview?.attachments.forEach((attachment) => URL.revokeObjectURL(attachment.url)); }, [msgPreview]);
+
+  useEffect(() => {
+    if (!autoOpenMtsVoucher || !selected || !isMtsIndexedFile(selected) || !msgPreview) return;
+    const voucher = msgPreview.attachments.find((attachment) =>
+      attachment.type === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf"),
+    );
+    setAutoOpenMtsVoucher(false);
+    if (voucher) {
+      setActiveAttachment(voucher);
+      setActiveAttachmentPage(1);
+      setAttachmentSearchMatches([]);
+      setAttachmentSearchStatus("");
+      setAttachmentPdfSearchTerm("");
+    } else {
+      setStorageMessage("تم فتح رسالة MTS، لكن لم يتم العثور على ملف PDF مرفق بها.");
+    }
+  }, [autoOpenMtsVoucher, selected, msgPreview]);
   const [currentPage, setCurrentPage] = useState(1);
   const [restoreComplete, setRestoreComplete] = useState(false);
   const [storageMessage, setStorageMessage] = useState("جارٍ استعادة المجلد المحفوظ...");
@@ -1479,6 +1533,11 @@ export default function GuestNameExtractorPage() {
             arrivalNameMatchesText(arrival.name, [candidate.name, candidate.path, candidate.company, page].join(" "))))
         : files.filter((candidate) => candidate.pages.some((page) =>
             matchesSearchText([candidate.name, candidate.path, candidate.company, page].join(" "), term)));
+      const mtsFiles = matchingFiles.filter((candidate) => isMtsIndexedFile(candidate));
+      const prioritizedMtsFiles = [...mtsFiles].sort((left, right) => {
+        const priority = (candidate: IndexedFile) => candidate.extension === "msg" ? 0 : candidate.extension === "pdf" ? 1 : 2;
+        return priority(left) - priority(right);
+      });
       const sunFiles = matchingFiles.filter((candidate) => isSunInternationalIndexedFile(candidate));
       const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
         const priority = (candidate: IndexedFile) => {
@@ -1493,10 +1552,10 @@ export default function GuestNameExtractorPage() {
         };
         return priority(left) - priority(right);
       });
-      const file = prioritizedSunFiles[0] || matchingFiles[0] || null;
+      const file = prioritizedMtsFiles[0] || prioritizedSunFiles[0] || matchingFiles[0] || null;
       const people = file ? extractPeopleForMultipleView(file, arrival?.name || term, true) : [];
-      // Preserve repeated SUN guest rows; keep existing de-duplication for other companies.
-      const uniquePeople = file && (isSunInternationalIndexedFile(file) || isW2mIndexedFile(file))
+      // Preserve repeated guest rows for MTS, SUN and W2M; each row is a traveler.
+      const uniquePeople = file && (isMtsIndexedFile(file) || isSunInternationalIndexedFile(file) || isW2mIndexedFile(file))
         ? people
         : people.filter((person, personIndex, all) =>
             all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
@@ -1851,6 +1910,85 @@ export default function GuestNameExtractorPage() {
     // Browser fallback: download the untouched message for opening in Outlook.
     downloadOriginalMsg();
     setStorageMessage("تم تنزيل ملف MSG الأصلي. افتحه باستخدام Outlook إذا كان مثبتاً على جهازك.");
+  }
+
+  async function openMtsOutlookFile(item: IndexedFile) {
+    if (item.extension.toLowerCase() !== "msg") return;
+    if (!window.desktopBridge) {
+      const url = URL.createObjectURL(item.file);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = item.name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setStorageMessage("تم تنزيل ملف Outlook الأصلي. افتحه باستخدام Outlook.");
+      return;
+    }
+    try {
+      const opened = await window.desktopBridge.openPath(item.path);
+      setStorageMessage(opened
+        ? "تم إرسال ملف MTS الأصلي إلى Windows لفتحه باستخدام Outlook."
+        : "تعذر فتح ملف MTS. تحقق من تثبيت Outlook وارتباط ملفات MSG به.");
+    } catch {
+      setStorageMessage("تعذر فتح ملف MTS في Outlook.");
+    }
+  }
+
+  function openMtsVoucher(item: SearchResult) {
+    setAutoOpenMtsVoucher(item.extension.toLowerCase() === "msg");
+    openPreview(item);
+  }
+
+  async function printMtsVoucher(item: IndexedFile) {
+    let voucherBlob: Blob | null = null;
+    if (item.extension.toLowerCase() === "pdf") {
+      voucherBlob = item.file;
+    } else if (item.extension.toLowerCase() === "msg") {
+      try {
+        const { MsgReader } = await import("@kenjiuno/msgreader-web-ng");
+        const reader = new MsgReader(await item.file.arrayBuffer());
+        const data = reader.getFileData();
+        const rows = Array.isArray(data.attachments) ? data.attachments as unknown as Array<Record<string, unknown>> : [];
+        const msgReader = reader as unknown as {
+          getAttachment: (attachment: unknown) => { fileName?: string; content: Uint8Array };
+        };
+        for (const row of rows) {
+          const extracted = msgReader.getAttachment(row);
+          const name = String(extracted.fileName || row.fileName || row.name || "");
+          if (!name.toLowerCase().endsWith(".pdf")) continue;
+          voucherBlob = new Blob([new Uint8Array(extracted.content).buffer as ArrayBuffer], { type: "application/pdf" });
+          break;
+        }
+      } catch {
+        voucherBlob = null;
+      }
+    }
+    if (!voucherBlob) {
+      window.alert("لم يتم العثور على ملف PDF Voucher داخل حجز MTS.");
+      return;
+    }
+    const url = URL.createObjectURL(voucherBlob);
+    const printWindow = window.open(url, "_blank");
+    if (!printWindow) {
+      URL.revokeObjectURL(url);
+      window.alert("يرجى السماح بالنوافذ المنبثقة حتى تتمكن من طباعة الفاوتشر.");
+      return;
+    }
+    const timer = window.setInterval(() => {
+      try {
+        if (printWindow.document.readyState === "complete") {
+          window.clearInterval(timer);
+          printWindow.focus();
+          printWindow.print();
+        }
+      } catch {
+        window.clearInterval(timer);
+      }
+    }, 700);
+    window.setTimeout(() => window.clearInterval(timer), 15_000);
+    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 
   async function removeSavedFolder() {
@@ -2219,8 +2357,14 @@ export default function GuestNameExtractorPage() {
                   : <p className="muted">بحث: {card.term} · لم يتم العثور على سجل مطابق في arr.pdf</p>}
                 {card.file ? <>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "8px 0" }}>
-                    {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(card.file!.path)}>مكان الملف</button>}
-                    <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [1] })}>معاينة واستخراج</button>
+                    {isMtsIndexedFile(card.file) ? <>
+                      {card.file.extension.toLowerCase() === "msg" && <button type="button" className="add-button" onClick={() => void openMtsOutlookFile(card.file!)}>فتح ملف Outlook</button>}
+                      <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...card.file!, matchedPages: [1] })}>استعراض الفاوتشر</button>
+                      <button type="button" className="add-button" onClick={() => void printMtsVoucher(card.file!)}>طباعة الفاوتشر</button>
+                    </> : <>
+                      {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(card.file!.path)}>مكان الملف</button>}
+                      <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [1] })}>معاينة واستخراج</button>
+                    </>}
                   </div>
                   <p className="folder-path" dir="ltr">{card.file.path}</p>
                   <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "rgba(255,255,255,.72)", border: "1px solid #dbe4ef" }}>
