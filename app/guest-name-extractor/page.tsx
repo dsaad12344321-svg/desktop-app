@@ -605,7 +605,7 @@ function extractTravelWaysPeople(text: string, searchTerm: string) {
   return matchingGroups.flatMap((group) => group.people);
 }
 
-function extractPeople(text: string, searchTerm: string, company = "", enableSunCheckInList = false) {
+function extractPeople(text: string, searchTerm: string, company = "", enableSunCheckInList = false, preserveDuplicateNames = false) {
   company = detectVoucherCompany(text, company);
   const isTravelWaysReport = /travel\s*ways/i.test(company)
     || (/HOTEL\s+CONTRACT\s+EBD\s+LIST/i.test(text)
@@ -1134,11 +1134,16 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
   const dates: string[] = [];
   const dateRegex = new RegExp("(?:date\\s*of\\s*birth|birth\\s*date|dob|d\\.o\\.b\\.?|تاريخ\\s*الميلاد)\\s*[:#-]?\\s*(" + datePattern + ")", "gi");
   for (const match of clean.matchAll(dateRegex)) dates.push(match[1]);
+  const ages: string[] = [];
+  if (preserveDuplicateNames) {
+    const ageRegex = /(?:\\bage\\b|years?\\s*old)\\s*[:#-]?\\s*(\\d{1,3})|\\((\\d{1,3})\\)/gi;
+    for (const match of clean.matchAll(ageRegex)) ages.push(match[1] || match[2]);
+  }
   const names: string[] = [];
   const nameRegex = /(?:guest\s*name|passenger\s*name|full\s*name|name\s*of\s*guest|guest|passenger|الاسم|اسم\s*النزيل)\s*[:#-]?\s*([\p{L}][\p{L}\s'.-]{2,60}?)(?=\s+(?:date\s*of\s*birth|birth\s*date|dob|d\.o\.b\.?|passport|nationality|room|تاريخ\s*الميلاد)\b|[,;|]|$)/giu;
   for (const match of clean.matchAll(nameRegex)) {
     const candidate = match[1].trim();
-    if (candidate && !names.some((name) => normalize(name) === normalize(candidate))) names.push(candidate);
+    if (candidate && (preserveDuplicateNames || !names.some((name) => normalize(name) === normalize(candidate)))) names.push(candidate);
   }
   if (!names.length && searchTerm.trim()) {
     const escaped = searchTerm.trim().replace(/[.*+?^\x24{}()|[\]\\]/g, "\\$&");
@@ -1147,7 +1152,7 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
   }
   return names.map((name, index) => ({
     name: titleCaseName(name),
-    dob: dates[index] || (dates.length === 1 ? dates[0] : "لم يُعثر عليه"),
+    dob: dates[index] || (dates.length === 1 ? dates[0] : ages[index] ? "(Age: " + ages[index] + ")" : "لم يُعثر عليه"),
   }));
 }
 
@@ -1231,7 +1236,7 @@ function extractPeopleForMultipleView(
       matchingPages = sourcePages;
     }
     return matchingPages.flatMap((page) =>
-      extractPeople(page, queryIsNumeric ? "" : searchTerm, file.company, enableSunCheckInList),
+      extractPeople(page, "", file.company, enableSunCheckInList, true),
     );
   }
 
