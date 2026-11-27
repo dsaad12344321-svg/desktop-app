@@ -3,6 +3,9 @@ export {};
 declare global {
   interface Window {
     desktopBridge?: {
+      getSavedFolderPath: () => Promise<string>;
+      saveFolderPath: (rootPath: string) => Promise<boolean>;
+      clearSavedFolderPath: () => Promise<boolean>;
       getAppInfo: () => Promise<{
         name: string;
         version: string;
