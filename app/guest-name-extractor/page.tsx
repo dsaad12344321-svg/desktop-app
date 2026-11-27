@@ -2316,7 +2316,7 @@ export default function GuestNameExtractorPage() {
         <html lang="ar">
           <head>
             <meta charset="utf-8">
-            <title>MTS Guest Voucher - Page \${pageNumber}</title>
+            <title>MTS Guest Voucher - Page ${pageNumber}</title>
             <style>
               @page { size: A4; margin: 0; }
               html, body { margin: 0; padding: 0; background: #fff; }
@@ -2325,7 +2325,7 @@ export default function GuestNameExtractorPage() {
             </style>
           </head>
           <body>
-            <img src="\${pageImage}" alt="MTS Guest Voucher page \${pageNumber}">
+            <img src="${pageImage}" alt="MTS Guest Voucher page ${pageNumber}">
             <script>
               const image = document.querySelector("img");
               image.addEventListener("load", () => {
