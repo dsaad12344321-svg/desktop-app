@@ -1538,9 +1538,9 @@ export default function GuestNameExtractorPage() {
       if (!isMtsIndexedFile(item)) return true;
       const folderPath = item.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
       const folderFiles = files.filter((candidate) => isMtsIndexedFile(candidate) && candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase() === folderPath);
-      const bookingMessages = folderFiles.filter((candidate) => candidate.extension.toLowerCase() === "msg" && /^\\d+\\.msg$/i.test(candidate.name));
+      const bookingMessages = folderFiles.filter((candidate) => candidate.extension.toLowerCase() === "msg" && /^\d+\.msg$/i.test(candidate.name));
       if (bookingMessages.length) return item.extension.toLowerCase() === "msg" && /^\\d+\\.msg$/i.test(item.name);
-      return /guest\\s*voucher/i.test(item.name) && ["pdf", "msg"].includes(item.extension.toLowerCase());
+      return /guest\s*voucher/i.test(item.name) && ["pdf", "msg"].includes(item.extension.toLowerCase());
     });
   }, [files, query, arrivals]);
 
