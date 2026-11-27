@@ -1478,7 +1478,16 @@ function getMtsVoucherCandidates(files: IndexedFile[]) {
 }
 
 function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals: ArrivalRecord[]): MultipleCard[] {
-  const terms = searchQuery.split(/[，,;؛\n]+/).map((part) => part.trim()).filter(Boolean);
+  const inputTerms = searchQuery.split(/[，,;؛\n]+/).map((part) => part.trim()).filter(Boolean);
+  // A confirmation number can belong to multiple rooms. Expand it into
+  // separate room searches so each guest is resolved against their own arrival.
+  const terms = inputTerms.flatMap((term) => {
+    const compact = normalize(term).replace(/\s+/g, "");
+    const sameConfirmation = arrivals.filter((item) =>
+      normalize(item.confirmationNo).replace(/\s+/g, "") === compact,
+    );
+    return sameConfirmation.length > 1 ? sameConfirmation.map((item) => item.roomNo) : [term];
+  });
   const mtsFiles = files.filter(isMtsIndexedFile);
   // Booking emails can have numeric or alphanumeric names (e.g. SG-179412.msg).
   // Exclude the multi-booking Guest Voucher List message itself.
