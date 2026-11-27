@@ -1136,7 +1136,7 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
   for (const match of clean.matchAll(dateRegex)) dates.push(match[1]);
   const ages: string[] = [];
   if (preserveDuplicateNames) {
-    const ageRegex = /(?:\\bage\\b|years?\\s*old)\\s*[:#-]?\\s*(\\d{1,3})|\\((\\d{1,3})\\)/gi;
+    const ageRegex = /(?:\bage\b|years?\s*old)\s*[:#-]?\s*(\d{1,3})|\((\d{1,3})\)/gi;
     for (const match of clean.matchAll(ageRegex)) ages.push(match[1] || match[2]);
   }
   const names: string[] = [];
