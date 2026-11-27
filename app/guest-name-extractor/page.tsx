@@ -435,11 +435,41 @@ function rtfToPlainText(value: string) {
 }
 
 function extractW2mPeople(text: string, searchTerm: string) {
-  const clean = text.replace(/\r/g, "\n").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ");
+  // W2M MSG bodies may contain HTML tables or text with LZFu/binary noise.
+  // Normalize the visible text while retaining row and bullet boundaries.
+  const clean = text
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>|<style\b[^>]*>[\s\S]*?<\/style>/gi, " ")
+    .replace(/<\/(?:tr|li|p|div|table|h[1-6])\s*>/gi, "\n")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;|&#160;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\r/g, "\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n[ \t]+/g, "\n");
+
   const passengersStart = clean.search(/\bPassengers?\s*:/i);
-  const section = passengersStart >= 0 ? clean.slice(passengersStart) : clean;
-  const sectionEnd = section.search(/\bNumber\s+of\s+Adults?\s*\/\s*Childs?\s*\/\s*Bab(?:y|ies)\b|\bBooking\s+Summary\b|\bPayment\s+Details\b/i);
-  const passengerText = sectionEnd > 0 ? section.slice(0, sectionEnd) : section;
+  const hasPassengersSection = passengersStart >= 0;
+  const section = hasPassengersSection ? clean.slice(passengersStart) : "";
+  const sectionEnd = section.search(
+    /\b(?:Special\s+remarks?|W2M\s+remarks?|Remarks?|Number\s+of\s+Adults?\s*\/\s*Childs?\s*\/\s*Bab(?:y|ies)|Booking\s+Summary|Payment\s+Details|Accommodation|Board)\s*:?/i,
+  );
+  const passengerText = hasPassengersSection
+    ? (sectionEnd > 0 ? section.slice(0, sectionEnd) : section)
+    : "";
+  // Per the W2M format, the summary-table fallback is used only when the
+  // Passengers section is absent; never search hotel remarks for guest names.
+  const fallbackStart = clean.search(/\bBooking\s+Summary\b/i);
+  const fallbackText = !hasPassengersSection
+    ? clean.slice(fallbackStart >= 0 ? fallbackStart : 0)
+    : "";
+  const sourceText = hasPassengersSection ? passengerText : fallbackText;
+
   const people: { name: string; dob: string }[] = [];
   const add = (name: string, detail = "") => {
     const normalizedName = name.replace(/\s+/g, " ").replace(/^[*•\-\s]+|[|,;\s]+$/g, "").trim();
@@ -447,23 +477,24 @@ function extractW2mPeople(text: string, searchTerm: string) {
     people.push({ name: titleCaseName(normalizedName), dob: detail.trim() });
   };
 
-  // Standard W2M bullet format: "* Full Name (Age: 21)" or a DOB label.
-  const bulletPattern = /(?:^|\n|\s)[*•]\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})|\(\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*\))?/giu;
-  for (const match of passengerText.matchAll(bulletPattern)) {
-    add(match[1], match[2] ? "(Age: " + match[2] + ")" : match[3] || match[4] || "");
-  }
-  // Some templates omit bullets; accept unbulleted rows only when they carry
-  // an explicit age or birthdate so table headings cannot become guest names.
-  const unbulletedPattern = /(?:^|\n)\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})|\(\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*\))/giu;
-  if (!people.length) {
-    for (const match of passengerText.matchAll(unbulletedPattern)) {
+  if (hasPassengersSection) {
+    // Passenger rows: "* Full Name (Age: 21)", DOB, or a bare date.
+    const bulletPattern = /(?:^|\n|\s)[*•]\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})|\(\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*\))?/giu;
+    for (const match of passengerText.matchAll(bulletPattern)) {
       add(match[1], match[2] ? "(Age: " + match[2] + ")" : match[3] || match[4] || "");
+    }
+
+    const unbulletedPattern = /(?:^|\n)\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})|\(\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*\))/giu;
+    if (!people.length) {
+      for (const match of passengerText.matchAll(unbulletedPattern)) {
+        add(match[1], match[2] ? "(Age: " + match[2] + ")" : match[3] || match[4] || "");
+      }
     }
   }
 
-  // W2M can also send a passenger table with separate first/last-name columns.
-  const lines = passengerText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const headerIndex = people.length ? -1 : lines.findIndex((line) =>
+  // Fallback table: separate Passenger Name / Passenger Last Name columns.
+  const lines = sourceText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const headerIndex = lines.findIndex((line) =>
     /Passenger\s+Name/i.test(line) && /Passenger\s+Last\s+Name/i.test(line),
   );
   if (headerIndex >= 0) {
@@ -473,7 +504,7 @@ function extractW2mPeople(text: string, searchTerm: string) {
     const ageIndex = header.findIndex((cell) => /^age$/.test(cell));
     const dobIndex = header.findIndex((cell) => /birth|dob|date of birth/.test(cell));
     for (const line of lines.slice(headerIndex + 1)) {
-      if (/^(number of adults|booking summary|payment details)/i.test(line)) break;
+      if (/^(number of adults|special remarks|w2m remarks|remarks|booking summary|payment details)/i.test(line)) break;
       const cells = line.split(/\s*\|\s*|\t+|\s{2,}/).map((cell) => cell.trim());
       if (firstIndex < 0 || lastIndex < 0 || !cells[firstIndex] || !cells[lastIndex]) continue;
       const dob = dobIndex >= 0 ? cells[dobIndex] || "" : "";
@@ -483,10 +514,12 @@ function extractW2mPeople(text: string, searchTerm: string) {
     }
   }
 
-  if (!people.length) {
-    // Label/value layout used by some W2M email templates.
+  if (!people.length && !hasPassengersSection) {
+    // Summary fallback only: accept the explicit first/last-name labels.
     const rowPattern = /(?:Passenger\s+Name|First\s+Name)\s*:?\s*([\p{L}\p{M}'’.-]+)[\s|,]+(?:Passenger\s+Last\s+Name|Last\s+Name|Surname)\s*:?\s*([\p{L}\p{M}'’.-]+)(?:[\s|,]+(?:Age\s*:?\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})))?/giu;
-    for (const match of passengerText.matchAll(rowPattern)) add(match[1] + " " + match[2], match[3] ? "(Age: " + match[3] + ")" : match[4] || "");
+    for (const match of fallbackText.matchAll(rowPattern)) {
+      add(match[1] + " " + match[2], match[3] ? "(Age: " + match[3] + ")" : match[4] || "");
+    }
   }
 
   if (!people.length) return [];
@@ -500,7 +533,6 @@ function extractW2mPeople(text: string, searchTerm: string) {
   });
   return !query || bookingMatches || nameMatches ? people : [];
 }
-
 function titleCaseAnexName(value: string) {
   // Anex prints guest names as SURNAME GIVEN-NAME; show them as Given-name Surname.
   const parts = value.trim().split(/\s+/).filter(Boolean);
@@ -819,7 +851,7 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
       && /\bPassenger\s+Name\b/i.test(clean)
       && /\bPassenger\s+Last\s+Name\b/i.test(clean));
   if (isW2mBooking) {
-    const w2mPeople = extractW2mPeople(clean, searchTerm);
+    const w2mPeople = extractW2mPeople(text, searchTerm);
     if (w2mPeople.length) return w2mPeople;
   }
 
