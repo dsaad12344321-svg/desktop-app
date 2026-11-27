@@ -1686,7 +1686,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
       // same-name hits from other operators (e.g. Biblio rooming-list emails).
       const companyScopedFiles = arrival?.company
         ? matchingFiles.filter((candidate) =>
-            canonicalizeArrivalCompany(candidate.company) === canonicalizeArrivalCompany(arrival.company || ""),
+            normalize(canonicalizeArrivalCompany(candidate.company)) === normalize(canonicalizeArrivalCompany(arrival.company || "")),
           )
         : [];
       const sourceFiles = companyScopedFiles.length ? companyScopedFiles : matchingFiles;
