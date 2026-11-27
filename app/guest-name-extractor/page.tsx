@@ -109,8 +109,13 @@ async function extractArrivalReport(file: File): Promise<ArrivalRecord[]> {
     }
   }
 
+  // A confirmation number can be shared by different guests/rooms.
+  // Deduplicate only identical room + guest + confirmation records.
   const unique = new Map<string, ArrivalRecord>();
-  for (const record of records) unique.set(record.confirmationNo, record);
+  for (const record of records) {
+    const key = `${record.roomNo}|${normalize(record.name)}|${record.confirmationNo}`;
+    unique.set(key, record);
+  }
   return Array.from(unique.values());
 }
 
@@ -635,20 +640,25 @@ function extractTravelWaysPeople(text: string, searchTerm: string) {
 function extractPeople(text: string, searchTerm: string, company = "", enableSunCheckInList = false, preserveDuplicateNames = false) {
   company = detectVoucherCompany(text, company);
 
-  // MTS / OTS Guest Voucher: each page contains one booking and a
-  // "Travellers" section with numbered entries such as:
-  // 1. Herr Spiegel Kevin (19.Jul.1997) or 1. Ms. Wagner Nicole (55).
-  if (/\bVoucher\s+Reference\s+No\.?\s*:/i.test(text) && /\bTravellers\s*:/i.test(text)) {
-    const travellerSection = text.match(/\bTravellers\s*:\s*\d+\s+persons?\s*([\s\S]*?)(?=\bDates\s*:|$)/i)?.[1] || "";
-    const mtsRow = /(?:^|\s)\d{1,2}\s*[.)-]\s*((?:Herr|Frau|Mr|Mrs|Ms|Miss|Mstr|Master)\.?\s+[\p{L}\p{M}'’.-]+(?:\s+[\p{L}\p{M}'’.-]+){1,5})\s*\(\s*(\d{1,2}\s*[.\/-]\s*[A-Za-z]{3,9}\s*[.\/-]\s*\d{4}|\d{1,2}\s*[.\/-]\s*\d{1,2}\s*[.\/-]\s*\d{2,4}|\d{1,3})\s*\)/giu;
+  // MTS / OTS Guest Voucher: traveller rows may include a title, omit it,
+  // or use Dutch titles such as "de heer". Examples:
+  // 1. Herr Spiegel Kevin (19.Jul.1997), 1. Solina Natalia (30),
+  // 3. de heer Nabben Laurence (15.Jul.1969).
+  if (/\b(?:Voucher\s+)?Reference\s+No\.?\s*:/i.test(text) && /\bTravellers?\s*:/i.test(text)) {
+    const travellerSection = text.match(/\bTravellers?\s*:\s*\d+\s+persons?\s*([\s\S]*?)(?=\bDates\s*:|$)/i)?.[1] || "";
+    const mtsRow = /(?:^|\n)\s*\d{1,2}\s*[.)-]\s*([^\r\n(]+?)\s*\(\s*(\d{1,2}\s*[.\/-]\s*[A-Za-z]{3,9}\s*[.\/-]\s*\d{4}|\d{1,2}\s*[.\/-]\s*\d{1,2}\s*[.\/-]\s*\d{2,4}|\d{1,3})\s*\)/gim;
     const mtsPeople = Array.from(travellerSection.matchAll(mtsRow), (match) => {
       const value = match[2].replace(/\s+/g, "");
       const isAge = /^\d{1,3}$/.test(value);
+      const name = match[1].trim()
+        .replace(/^(?:de\s+heer|mevrouw|herr|frau|mr|mrs|ms|miss|mstr|master)\.?\s+/i, "")
+        .trim();
+      if (!name) return null;
       return {
-        name: titleCaseName(match[1].replace(/\s+/g, " ").trim()),
+        name: titleCaseName(name.replace(/\s+/g, " ")),
         dob: isAge ? "(Age: " + value + ")" : value.replace(/[\/-]/g, "."),
       };
-    });
+    }).filter((person): person is MultipleGuest => Boolean(person));
     if (mtsPeople.length) return mtsPeople;
   }
   const isTravelWaysReport = /travel\s*ways/i.test(company)
@@ -1470,8 +1480,10 @@ function getMtsVoucherCandidates(files: IndexedFile[]) {
 function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals: ArrivalRecord[]): MultipleCard[] {
   const terms = searchQuery.split(/[，,;؛\n]+/).map((part) => part.trim()).filter(Boolean);
   const mtsFiles = files.filter(isMtsIndexedFile);
+  // Booking emails can have numeric or alphanumeric names (e.g. SG-179412.msg).
+  // Exclude the multi-booking Guest Voucher List message itself.
   const mtsMessages = mtsFiles.filter((file) =>
-    file.extension.toLowerCase() === "msg" && /^\d+\.msg$/i.test(file.name),
+    file.extension.toLowerCase() === "msg" && !/guest\s*voucher/i.test(file.name),
   );
   const voucherCandidates = getMtsVoucherCandidates(files);
   const searchableText = new Map(files.map((file) => [file.id, getMtsIndexedText(file)]));
