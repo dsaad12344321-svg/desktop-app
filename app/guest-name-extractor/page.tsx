@@ -2308,10 +2308,6 @@ export default function GuestNameExtractorPage() {
     return matchIndex >= 0 ? matchIndex + 1 : 1;
   }
 
-  function printAnexVoucher(item: IndexedFile, searchTerm: string, guestName = "") {
-    setAnexPrintRequest({ item, pageInput: String(findAnexVoucherPage(item, searchTerm, guestName)) });
-  }
-
   async function executeAnexVoucherPrint(item: IndexedFile, pageInput: string) {
     const pageNumber = Number(pageInput.trim());
     if (!Number.isInteger(pageNumber) || pageNumber < 1) {
@@ -2840,7 +2836,7 @@ export default function GuestNameExtractorPage() {
                       <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...(card.voucherFile || card.file)!, matchedPages: [1] })}>استعراض الفاوتشر</button>
                       <button type="button" className="add-button" onClick={() => void printMtsVoucher((card.voucherFile || card.file)!, card.voucherPageNumber || 1)}>طباعة الفاوتشر</button>
                     </> : isAnexIndexedFile(card.file) && card.file.extension.toLowerCase() === "pdf" ? <>
-                      <button type="button" className="add-button" onClick={() => printAnexVoucher(card.file!, card.term, card.arrival?.name || "")}>طباعة فاوتشر Anex</button>
+                      <button type="button" className="add-button" onClick={() => void executeAnexVoucherPrint(card.file!, String(findAnexVoucherPage(card.file!, card.term, card.arrival?.name || "")))}>طباعة</button>
                       <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [findAnexVoucherPage(card.file!, card.term, card.arrival?.name || "")] })}>معاينة صفحة الفاوتشر</button>
                     </> : <>
                       {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(card.file!.path)}>مكان الملف</button>}
@@ -2890,7 +2886,7 @@ export default function GuestNameExtractorPage() {
                 <p className="muted">الشركة: {item.company}{item.month ? ` · الشهر: ${item.month}` : ""}{item.day ? ` · اليوم: ${item.day}` : ""} · النوع: {item.extension.toUpperCase()} · الحجم: {formatSize(item.size)}</p>
                 <p className="muted">الصفحات المطابقة: {item.matchedPages.join(", ")}</p>
               </div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(item.path)}>مكان الملف</button>}
+                {isAnexIndexedFile(item) && item.extension.toLowerCase() === "pdf" ? <button type="button" className="add-button" onClick={() => void executeAnexVoucherPrint(item, String(findAnexVoucherPage(item, effectivePeopleQuery)))}>طباعة</button> : isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(item.path)}>مكان الملف</button>}
                 <button type="button" className="add-button" onClick={() => openPreview(item)}>معاينة واستخراج</button>
               </div></div>
               <p className="folder-path" dir="ltr">{item.path}</p>
