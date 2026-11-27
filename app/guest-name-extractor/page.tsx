@@ -1965,7 +1965,10 @@ export default function GuestNameExtractorPage() {
         indexed.push({ id: path + "-" + file.lastModified + "-" + index, name: file.name, path,
           ...folderMetadata, extension, size: file.size, content: extracted.content,
           pages: extracted.pages, visualPages: extracted.visualPages, attachmentPages: extracted.attachmentPages, file });
-      } catch { failed.push(path); }
+      } catch (readError) {
+        const reason = readError instanceof Error ? readError.message : String(readError);
+        failed.push(`${path} — ${reason || "سبب غير معروف"}`);
+      }
       setProgress({ done: index + 1, total: readable.length });
     }
     setStorageMessage(`تمت قراءة ${indexed.length.toLocaleString("en-US")} ملف لهذه الجلسة فقط. لا يتم حفظ الملفات أو إنشاء قاعدة بيانات.`);
@@ -2028,8 +2031,9 @@ export default function GuestNameExtractorPage() {
             attachmentPages: extracted.attachmentPages,
             file,
           });
-        } catch {
-          failed.push(entry.relativePath);
+        } catch (readError) {
+          const reason = readError instanceof Error ? readError.message : String(readError);
+          failed.push(`${entry.relativePath} — ${reason || "سبب غير معروف"}`);
         }
         // Avoid thousands of React renders; update progress in small batches.
         if ((index + 1) % 10 === 0 || index === entries.length - 1) {
