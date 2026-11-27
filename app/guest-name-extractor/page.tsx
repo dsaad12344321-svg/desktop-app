@@ -602,7 +602,7 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
       const rawName = guestCell.replace(/\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b/g, "")
         .replace(/\s+/g, " ").replace(/^[,\s]+|[,\s]+$/g, "").replace(/,/g, " ").trim();
       if (!rawName || /^(?:SURNAME NAME|NAME|AGE)$/i.test(rawName)) continue;
-      current.people.push({ name: titleCaseName(rawName), dob: dobMatch ? dobMatch[1].replace(/[/-]/g, ".") : "لم يُعثر عليه" });
+      current.people.push({ name: titleCaseName(rawName), dob: dobMatch ? dobMatch[1].replace(/[/-]/g, ".") : "" });
     }
 
     const normalizedQuery = normalize(searchTerm);
