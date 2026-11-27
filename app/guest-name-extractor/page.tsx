@@ -2308,6 +2308,76 @@ export default function GuestNameExtractorPage() {
     return matchIndex >= 0 ? matchIndex + 1 : 1;
   }
 
+  function findFunSunVoucherPage(item: IndexedFile, searchTerm: string, guestName = "") {
+    const pages = item.visualPages?.length ? item.visualPages : item.pages;
+    const compactQuery = normalize(searchTerm).replace(/\\s+/g, "");
+    const isBookingNumber = /^\\d{3,9}$/.test(compactQuery);
+    const nameTokens = normalize(guestName || searchTerm).split(/\\s+/).filter((token) => token.length > 1);
+    const matchIndex = pages.findIndex((page) => {
+      const normalizedPage = normalize(page);
+      if (isBookingNumber && normalizedPage.replace(/\\s+/g, "").includes(compactQuery)) return true;
+      return nameTokens.length >= 2 && nameTokens.every((token) => normalizedPage.includes(token));
+    });
+    return matchIndex >= 0 ? matchIndex + 1 : 1;
+  }
+
+  async function executeFunSunVoucherPrint(item: IndexedFile, pageInput: string) {
+    const pageNumber = Number(pageInput.trim());
+    if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+      window.alert("يرجى إدخال رقم صفحة صحيح يبدأ من 1.");
+      return;
+    }
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      window.alert("يرجى السماح بالنوافذ المنبثقة حتى تتمكن من طباعة فاوتشر FUN&SUN.");
+      return;
+    }
+    printWindow.document.write("<!doctype html><html><body style='font-family:Arial;padding:24px'>جارٍ تجهيز صفحة FUN&SUN للطباعة...</body></html>");
+    printWindow.document.close();
+    try {
+      if (item.extension.toLowerCase() !== "pdf") throw new Error("طباعة FUN&SUN المباشرة متاحة حالياً لملفات PDF الأصلية فقط.");
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+      const pdf = await pdfjs.getDocument({ data: new Uint8Array(await item.file.arrayBuffer()) }).promise;
+      if (pageNumber > pdf.numPages) throw new Error("رقم الصفحة أكبر من عدد صفحات ملف FUN&SUN (" + pdf.numPages + ").");
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1.8 });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("تعذر تجهيز صفحة FUN&SUN للطباعة.");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: context, viewport, canvas } as Parameters<typeof page.render>[0]).promise;
+      const pageImage = canvas.toDataURL("image/png");
+      printWindow.document.open();
+      printWindow.document.write(`<!doctype html>
+        <html lang="ar">
+          <head>
+            <meta charset="utf-8">
+            <title>FUN&amp;SUN Voucher - Page ${pageNumber}</title>
+            <style>
+              @page { size: A4; margin: 0; }
+              html, body { margin: 0; padding: 0; background: #fff; }
+              img { display: block; width: 210mm; height: 297mm; object-fit: contain; margin: 0 auto; }
+              @media screen { body { display:flex; justify-content:center; } img { max-width:100vw; height:auto; } }
+            </style>
+          </head>
+          <body>
+            <img src="${pageImage}" alt="FUN&amp;SUN Voucher page ${pageNumber}">
+            <script>
+              const image = document.querySelector("img");
+              image.addEventListener("load", () => { window.focus(); window.print(); }, { once: true });
+              image.addEventListener("error", () => { document.body.textContent = "تعذر تجهيز الصفحة للطباعة."; }, { once: true });
+            </script>
+          </body>
+        </html>`);
+      printWindow.document.close();
+    } catch (error) {
+      printWindow.close();
+      window.alert(error instanceof Error ? error.message : "حدث خطأ أثناء تجهيز صفحة FUN&SUN للطباعة.");
+    }
+  }
+
   async function executeAnexVoucherPrint(item: IndexedFile, pageInput: string) {
     const pageNumber = Number(pageInput.trim());
     if (!Number.isInteger(pageNumber) || pageNumber < 1) {
@@ -2835,6 +2905,9 @@ export default function GuestNameExtractorPage() {
                       {card.file.extension.toLowerCase() === "msg" && <button type="button" className="add-button" onClick={() => void openMtsOutlookFile(card.file!)}>فتح ملف Outlook</button>}
                       <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...(card.voucherFile || card.file)!, matchedPages: [1] })}>استعراض الفاوتشر</button>
                       <button type="button" className="add-button" onClick={() => void printMtsVoucher((card.voucherFile || card.file)!, card.voucherPageNumber || 1)}>طباعة الفاوتشر</button>
+                    </> : isFunSunIndexedFile(card.file) && card.file.extension.toLowerCase() === "pdf" ? <>
+                      <button type="button" className="add-button" onClick={() => void executeFunSunVoucherPrint(card.file!, String(findFunSunVoucherPage(card.file!, card.term, card.arrival?.name || "")))}>طباعة</button>
+                      <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [findFunSunVoucherPage(card.file!, card.term, card.arrival?.name || "")] })}>معاينة صفحة الفاوتشر</button>
                     </> : isAnexIndexedFile(card.file) && card.file.extension.toLowerCase() === "pdf" ? <>
                       <button type="button" className="add-button" onClick={() => void executeAnexVoucherPrint(card.file!, String(findAnexVoucherPage(card.file!, card.term, card.arrival?.name || "")))}>طباعة</button>
                       <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [findAnexVoucherPage(card.file!, card.term, card.arrival?.name || "")] })}>معاينة صفحة الفاوتشر</button>
