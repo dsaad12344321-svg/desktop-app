@@ -185,10 +185,10 @@
       ],
       "parser": "sun",
       "signatures": [
-        "passenger\\s+informations",
         "surname\\s*,?\\s*name",
-        "birthdate",
-        "\\btitle\\b"
+        "\\bbirthdate\\b",
+        "\\btitle\\b",
+        "\\bage\\b"
       ],
       "bookingIdentifiers": [
         "voucher reference"
