@@ -1216,6 +1216,13 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
 
 type SunIndexedFile = Pick<IndexedFile, "extension" | "pages" | "visualPages" | "content" | "company" | "name" | "path">;
 
+function isAnexIndexedFile(file: Pick<IndexedFile, "company" | "content" | "pages" | "path"> | null | undefined) {
+  if (!file) return false;
+  return /\\banex(?:\\s*tour)?\\b/i.test(file.company)
+    || /\\banex(?:\\s*tour)?\\b/i.test(file.path)
+    || /\\bclients\\s*names\\s*,?\\s*citizenship\\b/i.test(file.content + " " + file.pages.join(" "));
+}
+
 function isW2mIndexedFile(file: Pick<IndexedFile, "company" | "content" | "pages"> | null | undefined) {
   if (!file) return false;
   return /^w2m$/i.test(file.company.trim())
@@ -1680,6 +1687,7 @@ export default function GuestNameExtractorPage() {
   const [msgPreviewError, setMsgPreviewError] = useState("");
   const [autoOpenMtsVoucher, setAutoOpenMtsVoucher] = useState(false);
   const [mtsPrintRequest, setMtsPrintRequest] = useState<{ item: IndexedFile; pageInput: string } | null>(null);
+  const [anexPrintRequest, setAnexPrintRequest] = useState<{ item: IndexedFile; pageInput: string } | null>(null);
   const [activeAttachment, setActiveAttachment] = useState<MsgAttachmentPreview | null>(null);
   const [attachmentSearchQuery, setAttachmentSearchQuery] = useState("");
   const [attachmentSearchMatches, setAttachmentSearchMatches] = useState<AttachmentSearchMatch[]>([]);
@@ -2258,6 +2266,81 @@ export default function GuestNameExtractorPage() {
     setMtsPrintRequest({ item, pageInput: String(defaultPageNumber) });
   }
 
+  function findAnexVoucherPage(item: IndexedFile, searchTerm: string, guestName = "") {
+    const pages = item.visualPages?.length ? item.visualPages : item.pages;
+    const compactQuery = normalize(searchTerm).replace(/\\s+/g, "");
+    const isReservationNumber = /^\\d{7,8}$/.test(compactQuery);
+    const nameTokens = normalize(guestName || searchTerm).split(/\\s+/).filter((token) => token.length > 1);
+    const matchIndex = pages.findIndex((page) => {
+      const normalizedPage = normalize(page);
+      if (isReservationNumber && normalizedPage.replace(/\\s+/g, "").includes(compactQuery)) return true;
+      return nameTokens.length >= 2 && nameTokens.every((token) => normalizedPage.includes(token));
+    });
+    return matchIndex >= 0 ? matchIndex + 1 : 1;
+  }
+
+  function printAnexVoucher(item: IndexedFile, searchTerm: string, guestName = "") {
+    setAnexPrintRequest({ item, pageInput: String(findAnexVoucherPage(item, searchTerm, guestName)) });
+  }
+
+  async function executeAnexVoucherPrint(item: IndexedFile, pageInput: string) {
+    const pageNumber = Number(pageInput.trim());
+    if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+      window.alert("يرجى إدخال رقم صفحة صحيح يبدأ من 1.");
+      return;
+    }
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      window.alert("يرجى السماح بالنوافذ المنبثقة حتى تتمكن من طباعة الفاوتشر.");
+      return;
+    }
+    printWindow.document.write("<!doctype html><html><body style='font-family:Arial;padding:24px'>جارٍ تجهيز فاوتشر Anex للطباعة...</body></html>");
+    printWindow.document.close();
+    try {
+      if (item.extension.toLowerCase() !== "pdf") throw new Error("طباعة Anex المباشرة متاحة حالياً لملفات PDF الأصلية فقط.");
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+      const pdf = await pdfjs.getDocument({ data: new Uint8Array(await item.file.arrayBuffer()) }).promise;
+      if (pageNumber > pdf.numPages) throw new Error("رقم الصفحة أكبر من عدد صفحات فاوتشر Anex (" + pdf.numPages + ").");
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1.8 });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("تعذر تجهيز صفحة فاوتشر Anex للطباعة.");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: context, viewport, canvas } as Parameters<typeof page.render>[0]).promise;
+      const pageImage = canvas.toDataURL("image/png");
+      printWindow.document.open();
+      printWindow.document.write(`<!doctype html>
+        <html lang="ar">
+          <head>
+            <meta charset="utf-8">
+            <title>Anex Voucher - Page ${pageNumber}</title>
+            <style>
+              @page { size: A4; margin: 0; }
+              html, body { margin: 0; padding: 0; background: #fff; }
+              img { display: block; width: 210mm; height: 297mm; object-fit: contain; margin: 0 auto; }
+              @media screen { body { display:flex; justify-content:center; } img { max-width:100vw; height:auto; } }
+            </style>
+          </head>
+          <body>
+            <img src="${pageImage}" alt="Anex Voucher page ${pageNumber}">
+            <script>
+              const image = document.querySelector("img");
+              image.addEventListener("load", () => { window.focus(); window.print(); }, { once: true });
+              image.addEventListener("error", () => { document.body.textContent = "تعذر تجهيز الصفحة للطباعة."; }, { once: true });
+            </script>
+          </body>
+        </html>`);
+      printWindow.document.close();
+      setAnexPrintRequest(null);
+    } catch (error) {
+      printWindow.close();
+      window.alert(error instanceof Error ? error.message : "حدث خطأ أثناء تجهيز فاوتشر Anex للطباعة.");
+    }
+  }
+
   async function executeMtsVoucherPrint(item: IndexedFile, pageInput: string) {
     const pageNumber = Number(pageInput.trim());
     if (!Number.isInteger(pageNumber) || pageNumber < 1) {
@@ -2727,6 +2810,9 @@ export default function GuestNameExtractorPage() {
                       {card.file.extension.toLowerCase() === "msg" && <button type="button" className="add-button" onClick={() => void openMtsOutlookFile(card.file!)}>فتح ملف Outlook</button>}
                       <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...(card.voucherFile || card.file)!, matchedPages: [1] })}>استعراض الفاوتشر</button>
                       <button type="button" className="add-button" onClick={() => void printMtsVoucher((card.voucherFile || card.file)!, card.voucherPageNumber || 1)}>طباعة الفاوتشر</button>
+                    </> : isAnexIndexedFile(card.file) && card.file.extension.toLowerCase() === "pdf" ? <>
+                      <button type="button" className="add-button" onClick={() => printAnexVoucher(card.file!, card.term, card.arrival?.name || "")}>طباعة فاوتشر Anex</button>
+                      <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [findAnexVoucherPage(card.file!, card.term, card.arrival?.name || "")] })}>معاينة صفحة الفاوتشر</button>
                     </> : <>
                       {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(card.file!.path)}>مكان الملف</button>}
                       <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [1] })}>معاينة واستخراج</button>
@@ -2932,6 +3018,24 @@ export default function GuestNameExtractorPage() {
           <p className="saved-hint">تنبيه: قد تتضمن البيانات المنسوخة أسماء النزلاء وأرقام جوازات السفر؛ راجعها واحذف أي بيانات لا ترغب في مشاركتها قبل إرسالها.</p>
       </section>}
 
+      {anexPrintRequest && <div role="dialog" aria-modal="true" aria-labelledby="anex-print-title"
+        style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+        <section className="panel" style={{ width: "min(100%, 440px)", margin: 0, boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
+          <h2 id="anex-print-title" style={{ marginTop: 0 }}>طباعة فاوتشر Anex</h2>
+          <p className="muted">تم تحديد صفحة الحجز تلقائياً. يمكنك تعديل رقم الصفحة قبل الطباعة.</p>
+          <label htmlFor="anex-print-page" style={{ display: "grid", gap: 6 }}>رقم الصفحة
+            <input id="anex-print-page" type="number" min="1" step="1" autoFocus
+              value={anexPrintRequest.pageInput}
+              onChange={(event) => setAnexPrintRequest((current) => current ? { ...current, pageInput: event.target.value } : null)}
+              onKeyDown={(event) => { if (event.key === "Enter") void executeAnexVoucherPrint(anexPrintRequest.item, anexPrintRequest.pageInput); }}
+              style={{ minHeight: 42, border: "1px solid #cbd6e2", borderRadius: 8, padding: "8px 12px", font: "inherit" }} />
+          </label>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+            <button type="button" className="add-button" onClick={() => setAnexPrintRequest(null)}>إلغاء</button>
+            <button type="button" className="add-button" onClick={() => void executeAnexVoucherPrint(anexPrintRequest.item, anexPrintRequest.pageInput)}>متابعة الطباعة</button>
+          </div>
+        </section>
+      </div>}
       {mtsPrintRequest && <div role="dialog" aria-modal="true" aria-labelledby="mts-print-title"
         style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
         <section className="panel" style={{ width: "min(100%, 440px)", margin: 0, boxShadow: "0 20px 60px rgba(0,0,0,.25)" }}>
