@@ -1293,6 +1293,9 @@ export default function GuestNameExtractorPage() {
   const [viewMode, setViewMode] = useState<"single" | "multiple">("single");
   const [arrivalFrom, setArrivalFrom] = useState("");
   const [arrivalTo, setArrivalTo] = useState("");
+  const [arrivalCompanyFilter, setArrivalCompanyFilter] = useState("all");
+  const [multipleSort, setMultipleSort] = useState<"input" | "company" | "room">("input");
+  const [multipleCopyStatus, setMultipleCopyStatus] = useState("");
   const [greenCards, setGreenCards] = useState<string[]>([]);
 
   useEffect(() => {
@@ -1433,12 +1436,34 @@ export default function GuestNameExtractorPage() {
     );
   }, [arrivals, query]);
 
+  // Resolve each arr.pdf booking to the company folder containing its guest name.
+  // This lets the arrival-time filter work by company without changing arr.pdf parsing.
+  const arrivalCompanies = useMemo(() => {
+    const companyByConfirmation = new Map<string, string>();
+    for (const arrival of arrivals) {
+      const matchedFile = files.find((candidate) =>
+        candidate.pages.some((page) =>
+          arrivalNameMatchesText(arrival.name, [candidate.name, candidate.path, candidate.company, page].join(" ")),
+        ),
+      );
+      companyByConfirmation.set(arrival.confirmationNo, matchedFile?.company || "غير محددة");
+    }
+    return companyByConfirmation;
+  }, [arrivals, files]);
+
+  const arrivalCompanyOptions = useMemo(
+    () => Array.from(new Set(Array.from(arrivalCompanies.values()))).sort((a, b) => a.localeCompare(b, "ar")),
+    [arrivalCompanies],
+  );
+
   const arrivalTimeMatches = useMemo(() => {
-    if (!arrivalFrom && !arrivalTo) return [];
-    return arrivals.filter((item) => (!arrivalFrom || item.arrivalTime >= arrivalFrom)
-      && (!arrivalTo || item.arrivalTime <= arrivalTo))
-      .sort((x, y) => x.arrivalTime.localeCompare(y.arrivalTime));
-  }, [arrivals, arrivalFrom, arrivalTo]);
+    if (!arrivalFrom && !arrivalTo && arrivalCompanyFilter === "all") return [];
+    return arrivals.filter((item) =>
+      (!arrivalFrom || item.arrivalTime >= arrivalFrom)
+      && (!arrivalTo || item.arrivalTime <= arrivalTo)
+      && (arrivalCompanyFilter === "all" || arrivalCompanies.get(item.confirmationNo) === arrivalCompanyFilter),
+    ).sort((x, y) => x.arrivalTime.localeCompare(y.arrivalTime));
+  }, [arrivals, arrivalFrom, arrivalTo, arrivalCompanyFilter, arrivalCompanies]);
 
   const multipleCards = useMemo(() => {
     const terms = query.split(/[，,;؛\\n]+/).map((part) => part.trim()).filter(Boolean);
@@ -1477,8 +1502,21 @@ export default function GuestNameExtractorPage() {
             all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
               && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
       return { key: index + "-" + compact, term, arrival, file, people: uniquePeople };
+    }).sort((left, right) => {
+      if (multipleSort === "company") {
+        const companyCompare = (left.file?.company || "غير محددة").localeCompare(
+          right.file?.company || "غير محددة", "ar", { sensitivity: "base" },
+        );
+        if (companyCompare) return companyCompare;
+      }
+      if (multipleSort === "room" || multipleSort === "company") {
+        const leftRoom = left.arrival?.roomNo || "";
+        const rightRoom = right.arrival?.roomNo || "";
+        return leftRoom.localeCompare(rightRoom, undefined, { numeric: true });
+      }
+      return 0;
     });
-  }, [query, arrivals, files]);
+  }, [query, arrivals, files, multipleSort]);
 
   const companies = useMemo(() => new Set(files.map((file) => file.company).filter((name) => name !== "غير محددة")).size, [files]);
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files]);
@@ -1931,6 +1969,24 @@ export default function GuestNameExtractorPage() {
 
   const [diagnosticStatus, setDiagnosticStatus] = useState("");
 
+  async function copyArrivalNumbers(kind: "room" | "confirmation") {
+    const values = arrivals
+      .map((item) => kind === "room" ? item.roomNo : item.confirmationNo)
+      .filter(Boolean);
+    if (!values.length) {
+      setMultipleCopyStatus("لا توجد بيانات في arr.pdf لنسخها.");
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(values.join(", "));
+      setMultipleCopyStatus(kind === "room"
+        ? `تم نسخ ${values.length} رقم غرفة. يمكنك لصقها في البحث المتعدد.`
+        : `تم نسخ ${values.length} رقم تأكيدي. يمكنك لصقها في البحث المتعدد.`);
+    } catch {
+      setMultipleCopyStatus("تعذر النسخ. تأكد من السماح للتطبيق بالوصول إلى الحافظة.");
+    }
+  }
+
   async function copyPageDiagnostics() {
     if (!selected) return;
     setDiagnosticStatus("جارٍ تجهيز بيانات الصفحة...");
@@ -2102,6 +2158,13 @@ export default function GuestNameExtractorPage() {
           </div>
           <h2>فلتر مواعيد الوصول من / إلى</h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 10 }}>
+            <label style={{ display: "grid", gap: 5 }}>الشركة
+              <select value={arrivalCompanyFilter} onChange={(event) => setArrivalCompanyFilter(event.target.value)}
+                style={{ minHeight: 40, border: "1px solid #cbd6e2", borderRadius: 8, padding: 8, font: "inherit" }}>
+                <option value="all">كل الشركات</option>
+                {arrivalCompanyOptions.map((company) => <option key={company} value={company}>{company}</option>)}
+              </select>
+            </label>
             <label style={{ display: "grid", gap: 5 }}>من
               <input type="time" value={arrivalFrom} onChange={(event) => setArrivalFrom(event.target.value)}
                 style={{ minHeight: 40, border: "1px solid #cbd6e2", borderRadius: 8, padding: 8 }} />
@@ -2111,18 +2174,32 @@ export default function GuestNameExtractorPage() {
                 style={{ minHeight: 40, border: "1px solid #cbd6e2", borderRadius: 8, padding: 8 }} />
             </label>
           </div>
-          {(arrivalFrom || arrivalTo) && <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
-            الغرف في هذه الفترة ({arrivalTimeMatches.length}): {arrivalTimeMatches.length
+          {(arrivalFrom || arrivalTo || arrivalCompanyFilter !== "all") && <div style={{ marginTop: 8, fontSize: 12, color: "#64748b" }}>
+            الغرف المطابقة ({arrivalTimeMatches.length}): {arrivalTimeMatches.length
               ? arrivalTimeMatches.map((item) => item.roomNo + " (" + item.arrivalTime + ")").join("، ")
-              : "لا توجد غرف في هذه الفترة"}
+              : "لا توجد غرف مطابقة للفترة والشركة المحددتين"}
           </div>}
         </section>
         {viewMode === "multiple" && <section className="panel">
           <h2>البحث المتعدد</h2>
           <p className="muted">اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة.</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
+            <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("room")} disabled={!arrivals.length}>نسخ كل أرقام الغرف</button>
+            <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("confirmation")} disabled={!arrivals.length}>نسخ كل الأرقام التأكيدية</button>
+          </div>
+          {multipleCopyStatus && <p className="saved-hint" role="status">{multipleCopyStatus}</p>}
           <textarea value={query} onChange={(event) => setQuery(event.target.value)}
             placeholder="مثال: 0115, 209682, Fazliji, 0166" aria-label="البحث في عدة غرف وحجوزات"
             rows={3} style={{ width: "100%", border: "1px solid #cbd6e2", borderRadius: 10, padding: 12, font: "inherit", resize: "vertical" }} />
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginTop: 10 }}>
+            <label htmlFor="multiple-sort" style={{ fontSize: 13, color: "#526174" }}>ترتيب الغرف:</label>
+            <select id="multiple-sort" value={multipleSort} onChange={(event) => setMultipleSort(event.target.value as "input" | "company" | "room")}
+              style={{ minHeight: 38, border: "1px solid #cbd6e2", borderRadius: 8, padding: "4px 10px", font: "inherit" }}>
+              <option value="input">حسب ترتيب البحث</option>
+              <option value="company">حسب الشركة ثم رقم الغرفة</option>
+              <option value="room">حسب رقم الغرفة</option>
+            </select>
+          </div>
           {query.trim() && <p className="saved-hint">عدد مربعات البحث: {multipleCards.length}</p>}
           {multipleCards.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,390px),1fr))", gap: 12, marginTop: 14 }}>
             {multipleCards.map((card) => {
