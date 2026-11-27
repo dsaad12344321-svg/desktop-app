@@ -131,6 +131,10 @@ type VoucherRule = { id: string; company: string; aliases: string[]; parser: str
 const configuredVoucherRules = voucherRules as { version: number; rules: VoucherRule[]; searchFields: string[] };
 
 function detectVoucherCompany(text: string, currentCompany = "") {
+  if (/noreply@w2m\.com|world\s*2\s*meet|world2meet/i.test(text)
+    || (/\bBooking\s+Code\b/i.test(text)
+      && /\bPassenger\s+Name\b/i.test(text)
+      && /\bPassenger\s+Last\s+Name\b/i.test(text))) return "W2M";
   if (currentCompany.trim() && currentCompany.trim() !== "غير محددة") return currentCompany.trim();
   // FUN&SUN is a separate supplier format and must not be reclassified.
   if (/FUN\s*&\s*SUN|FUN\s+SUN|EX\s+TUI\s+RUSSIA/i.test(text)) {
@@ -248,6 +252,20 @@ async function extractText(file: File, extension: string): Promise<{ content: st
       .filter((name): name is string => typeof name === "string" && Boolean(name.trim()));
     const attachmentRows = Array.isArray(data.attachments) ? data.attachments as unknown as Array<Record<string, unknown>> : [];
     const attachmentNames = attachmentRows.map((attachment) => String(attachment.fileName || attachment.name || "").trim()).filter(Boolean);
+    const htmlBodyValue = (data as unknown as { bodyHtml?: string | Uint8Array; html?: string | Uint8Array }).bodyHtml
+      || (data as unknown as { html?: string | Uint8Array }).html;
+    const htmlBodyText = htmlBodyValue ? htmlToPlainText(htmlBodyValue) : "";
+    let compressedRtfText = "";
+    const compressedRtf = (data as unknown as { compressedRtf?: Uint8Array }).compressedRtf;
+    if (compressedRtf && compressedRtf.byteLength) {
+      try {
+        const { decompressRTF } = await import("@kenjiuno/decompressrtf");
+        const decompressed = decompressRTF(Array.from(compressedRtf));
+        compressedRtfText = rtfToPlainText(new TextDecoder("windows-1252").decode(new Uint8Array(decompressed)));
+      } catch {
+        // Some messages contain a corrupt RTF stream; retain their plain/HTML body.
+      }
+    }
     const fields = [
       data.subject && `الموضوع: ${data.subject}`,
       data.senderName && `المرسل: ${data.senderName}`,
@@ -256,9 +274,11 @@ async function extractText(file: File, extension: string): Promise<{ content: st
       recipientNames.length ? `المستلمون: ${recipientNames.join(", ")}` : "",
       attachmentNames.length ? `المرفقات: ${attachmentNames.join(", ")}` : "",
       typeof data.body === "string" ? data.body : "",
+      htmlBodyText,
+      compressedRtfText,
       typeof data.headers === "string" ? `\n--- بيانات الرسالة ---\n${data.headers}` : "",
     ].filter((value): value is string => typeof value === "string" && Boolean(value.trim()));
-    const content = fields.join("\n\n").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ").trim();
+    const content = Array.from(new Set(fields)).join("\n\n").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ").trim();
     if (!content || !/[\p{L}\p{N}]/u.test(content)) {
       throw new Error("تعذر استخراج نص مقروء من ملف Outlook MSG.");
     }
@@ -371,6 +391,108 @@ async function extractText(file: File, extension: string): Promise<{ content: st
 function titleCaseName(value: string) {
   return value.trim().toLocaleLowerCase().replace(/(^|[\s'-])([\p{L}])/gu,
     (_match, separator: string, letter: string) => separator + letter.toLocaleUpperCase());
+}
+
+function htmlToPlainText(value: string | Uint8Array | ArrayBuffer) {
+  let html = "";
+  if (typeof value === "string") html = value;
+  else {
+    const bytes = value instanceof Uint8Array ? value : new Uint8Array(value);
+    try { html = new TextDecoder("utf-8").decode(bytes); }
+    catch { html = new TextDecoder("windows-1252").decode(bytes); }
+  }
+  if (!html.trim()) return "";
+  if (typeof DOMParser !== "undefined") {
+    const document = new DOMParser().parseFromString(html, "text/html");
+    document.querySelectorAll("script,style,head").forEach((node) => node.remove());
+    document.querySelectorAll("br").forEach((node) => node.replaceWith("\n"));
+    document.querySelectorAll("tr").forEach((node) => node.append("\n"));
+    document.querySelectorAll("td,th").forEach((node) => node.append(" | "));
+    return (document.body.textContent || "").replace(/\u00a0/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
+  return html.replace(/<\/(?:tr|p|div|li|br)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&")
+    .replace(/\s+/g, " ").trim();
+}
+
+function rtfToPlainText(value: string) {
+  let text = value
+    .replace(/\\'[0-9a-f]{2}/gi, (token) => {
+      const byte = Number.parseInt(token.slice(2), 16);
+      return new TextDecoder("windows-1252").decode(new Uint8Array([byte]));
+    })
+    .replace(/\\u(-?\d+)\??/g, (_match, raw) => String.fromCharCode((Number(raw) + 65536) % 65536))
+    .replace(/\\(?:par|line)\b\s?/gi, "\n")
+    .replace(/\\tab\b\s?/gi, "\t")
+    .replace(/\\(?:cell|row)\b\s?/gi, " | ")
+    .replace(/\\[a-zA-Z]+-?\d* ?/g, " ")
+    .replace(/\\[^a-zA-Z]/g, " ")
+    .replace(/[{}]/g, " ");
+  return text.replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function extractW2mPeople(text: string, searchTerm: string) {
+  const clean = text.replace(/\r/g, "\n").replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ");
+  const passengersStart = clean.search(/\bPassengers?\s*:/i);
+  const section = passengersStart >= 0 ? clean.slice(passengersStart) : clean;
+  const sectionEnd = section.search(/\bNumber\s+of\s+Adults?\s*\/\s*Childs?\s*\/\s*Bab(?:y|ies)\b|\bBooking\s+Summary\b|\bPayment\s+Details\b/i);
+  const passengerText = sectionEnd > 0 ? section.slice(0, sectionEnd) : section;
+  const people: { name: string; dob: string }[] = [];
+  const seen = new Set<string>();
+  const add = (name: string, detail = "") => {
+    const normalizedName = name.replace(/\s+/g, " ").replace(/^[*•\-\s]+|[|,;\s]+$/g, "").trim();
+    if (!normalizedName || normalizedName.split(/\s+/).length < 2) return;
+    const normalizedDetail = detail.trim();
+    const key = normalize(normalizedName) + "|" + normalize(normalizedDetail);
+    if (seen.has(key)) return;
+    seen.add(key);
+    people.push({ name: titleCaseName(normalizedName), dob: normalizedDetail });
+  };
+
+  // Standard W2M bullet format: "* Full Name (Age: 21)" or a DOB label.
+  const bulletPattern = /(?:^|\n|\s)\*\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))?/giu;
+  for (const match of passengerText.matchAll(bulletPattern)) {
+    add(match[1], match[2] ? "(Age: " + match[2] + ")" : match[3] || match[4] || "");
+  }
+
+  // W2M can also send a passenger table with separate first/last-name columns.
+  const lines = passengerText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const headerIndex = lines.findIndex((line) =>
+    /Passenger\s+Name/i.test(line) && /Passenger\s+Last\s+Name/i.test(line),
+  );
+  if (headerIndex >= 0) {
+    const header = lines[headerIndex].split(/\s*\|\s*|\t+|\s{2,}/).map(normalize);
+    const firstIndex = header.findIndex((cell) => /passenger name|first name|given name/.test(cell));
+    const lastIndex = header.findIndex((cell) => /passenger last name|last name|surname/.test(cell));
+    const ageIndex = header.findIndex((cell) => /^age$/.test(cell));
+    const dobIndex = header.findIndex((cell) => /birth|dob|date of birth/.test(cell));
+    for (const line of lines.slice(headerIndex + 1)) {
+      if (/^(number of adults|booking summary|payment details)/i.test(line)) break;
+      const cells = line.split(/\s*\|\s*|\t+|\s{2,}/).map((cell) => cell.trim());
+      if (firstIndex < 0 || lastIndex < 0 || !cells[firstIndex] || !cells[lastIndex]) continue;
+      const dob = dobIndex >= 0 ? cells[dobIndex] || "" : "";
+      const age = ageIndex >= 0 ? cells[ageIndex] || "" : "";
+      add(cells[firstIndex] + " " + cells[lastIndex], dob.match(/\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/)?.[0]
+        || (age.match(/^\d{1,3}$/) ? "(Age: " + age + ")" : ""));
+    }
+  }
+
+  if (!people.length) {
+    // Label/value layout used by some W2M email templates.
+    const rowPattern = /(?:Passenger\s+Name|First\s+Name)\s*:?\s*([\p{L}\p{M}'’.-]+)[\s|,]+(?:Passenger\s+Last\s+Name|Last\s+Name|Surname)\s*:?\s*([\p{L}\p{M}'’.-]+)(?:[\s|,]+(?:Age\s*:?\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})))?/giu;
+    for (const match of passengerText.matchAll(rowPattern)) add(match[1] + " " + match[2], match[3] ? "(Age: " + match[3] + ")" : match[4] || "");
+  }
+
+  if (!people.length) return [];
+  const query = normalize(searchTerm);
+  const queryCompact = query.replace(/\s+/g, "");
+  const bookingMatches = Boolean(query && normalize(clean).replace(/\s+/g, "").includes(queryCompact));
+  const nameMatches = !query || people.some((person) => {
+    const parts = normalize(person.name).split(/\s+/);
+    const tokens = query.split(/\s+/).filter(Boolean);
+    return tokens.length > 0 && tokens.every((token) => parts.some((part) => part.includes(token)));
+  });
+  return !query || bookingMatches || nameMatches ? people : [];
 }
 
 function titleCaseAnexName(value: string) {
@@ -684,42 +806,15 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
     }
   }
 
-  // W2M booking emails: guest rows appear in the "Passengers" section as
-  // "* Full Name (Age: NN)". Use the full passenger list so every guest is
-  // returned, including middle names and repeated surname tokens.
+  // W2M Outlook bookings are parsed from the fully decoded message body.
   const isW2mBooking = /^w2m$/i.test(company.trim())
+    || /noreply@w2m\.com|world\s*2\s*meet|world2meet/i.test(clean)
     || (/\bBooking\s+Code\b/i.test(clean)
       && /\bPassenger\s+Name\b/i.test(clean)
-      && /\bPassenger\s+Last\s+Name\b/i.test(clean)
-      && /\bWorld\s+2\s+Meet\b/i.test(clean));
+      && /\bPassenger\s+Last\s+Name\b/i.test(clean));
   if (isW2mBooking) {
-    const passengersStart = clean.search(/\bPassengers\s*:/i);
-    const passengersEndMatch = passengersStart >= 0
-      ? clean.slice(passengersStart).match(/\bNumber\s+of\s+Adults\s*\/\s*Childs\s*\/\s*Babies\b/i)
-      : null;
-    const passengersSection = passengersStart >= 0
-      ? clean.slice(passengersStart + "Passengers:".length,
-          passengersEndMatch
-            ? passengersStart + "Passengers:".length + passengersEndMatch.index!
-            : clean.length)
-      : "";
-    const w2mRowPattern = /(?:^|\s)\*\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*\(\s*Age\s*:\s*\d{1,3}\s*\)/giu;
-    const w2mPeople = Array.from(passengersSection.matchAll(w2mRowPattern), (match) => ({
-      name: titleCaseName(match[1].trim()),
-      dob: "",
-    }));
-    if (w2mPeople.length) {
-      const normalizedSearch = normalize(searchTerm);
-      const matchesBooking = !normalizedSearch || w2mPeople.some((person) => {
-        const nameParts = normalize(person.name).split(/\s+/);
-        const queryParts = normalizedSearch.split(/\s+/).filter(Boolean);
-        return normalizedSearch === normalize(person.name)
-          || (queryParts.length > 0 && queryParts.every((token) =>
-            nameParts.some((part) => part.includes(token)),
-          ));
-      });
-      return matchesBooking ? w2mPeople : [];
-    }
+    const w2mPeople = extractW2mPeople(clean, searchTerm);
+    if (w2mPeople.length) return w2mPeople;
   }
 
   // TUI Destimo voucher: the PDF text extractor may emit the room columns
@@ -1811,7 +1906,9 @@ export default function GuestNameExtractorPage() {
   }
 
   async function copyGuestDetails(person: { name: string; dob: string }) {
-    const value = [person.name, person.dob === "لم يُعثر عليه" ? "" : person.dob].filter(Boolean).join(" - ");
+    const value = /^\(Age:\s*\d+\)$/i.test(person.dob)
+      ? person.name + " " + person.dob
+      : [person.name, person.dob === "لم يُعثر عليه" ? "" : person.dob].filter(Boolean).join(" - ");
     try {
       await navigator.clipboard.writeText(value);
       setDiagnosticStatus(`تم نسخ بيانات ${person.name}.`);
@@ -2041,7 +2138,7 @@ export default function GuestNameExtractorPage() {
                     <strong style={{ display: "block", marginBottom: 7 }}>الأسماء المستخرجة تلقائياً: {card.people.length}</strong>
                     {card.people.length
                       ? <div dir="ltr" style={{ display: "grid", gap: 5, textAlign: "left" }}>
-                          {card.people.map((person, personIndex) => <span key={person.name + personIndex} style={{ fontSize: 13 }}>{person.name}{person.dob ? " - " + person.dob : isSunInternationalIndexedFile(card.file) ? " -" : ""}</span>)}
+                          {card.people.map((person, personIndex) => <span key={person.name + personIndex} style={{ fontSize: 13 }}>{person.name}{/^\(Age:\s*\d+\)$/i.test(person.dob) ? " " + person.dob : person.dob ? " - " + person.dob : isSunInternationalIndexedFile(card.file) ? " -" : ""}</span>)}
                         </div>
                       : <span className="muted">لم يتم استخراج أسماء من الملف تلقائياً.</span>}
                   </div>
@@ -2116,7 +2213,7 @@ export default function GuestNameExtractorPage() {
           <h3>الأسماء وتواريخ الميلاد في الصفحة الحالية</h3>
           {extractedPeople.length ? <div className="folder-results">{extractedPeople.map((person, index) => (
             <div className="folder-result" key={index} dir="ltr" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, textAlign: "left", fontWeight: 700 }}>
-              <span>{selected.company.toLocaleLowerCase() === "easy jet" || !person.dob || person.dob === "لم يُعثر عليه" ? person.name : selected.company.toLocaleLowerCase() === "pegas" ? (person.name + " " + person.dob) : (person.name + " - " + person.dob)}</span>
+              <span>{selected.company.toLocaleLowerCase() === "easy jet" || !person.dob || person.dob === "لم يُعثر عليه" ? person.name : /^\(Age:\s*\d+\)$/i.test(person.dob) || selected.company.toLocaleLowerCase() === "pegas" ? (person.name + " " + person.dob) : (person.name + " - " + person.dob)}</span>
               <button type="button" onClick={() => void copyGuestDetails(person)} title={`نسخ بيانات ${person.name}`} aria-label={`نسخ بيانات ${person.name}`} style={{ flex: "0 0 34px", width: 34, height: 34, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #e45b65", borderRadius: 7, background: "#fff", color: "#d93645", cursor: "pointer" }}>
                 <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></svg>
               </button>
