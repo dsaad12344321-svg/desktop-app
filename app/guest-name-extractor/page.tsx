@@ -132,6 +132,10 @@ const configuredVoucherRules = voucherRules as { version: number; rules: Voucher
 
 function detectVoucherCompany(text: string, currentCompany = "") {
   if (currentCompany.trim() && currentCompany.trim() !== "غير محددة") return currentCompany.trim();
+  // FUN&SUN is a separate supplier format and must not be reclassified.
+  if (/FUN\s*&\s*SUN|FUN\s+SUN|EX\s+TUI\s+RUSSIA/i.test(text)) {
+    return currentCompany || "غير محددة";
+  }
   // SUN can be identified from its own branding or its distinctive passenger
   // table, even when the PDF omits the company heading.
   if (/\bSUN\s+INTERNATIONAL\b|\bSUNBUG\b/i.test(text)
@@ -1050,6 +1054,9 @@ function isSunInternationalIndexedFile(file: SunIndexedFile | null | undefined) 
   if (!file) return false;
   const company = normalize(file.company);
   const searchable = [file.name, file.path, file.content, ...file.pages, ...(file.visualPages || [])].join(" ");
+  const isFunSun = /^fun\s*&?\s*sun$/i.test(company)
+    || /FUN\s*&\s*SUN|FUN\s+SUN|EX\s+TUI\s+RUSSIA/i.test(searchable);
+  if (isFunSun) return false;
   const hasPassengerTable = /surname\s*,?\s*name/i.test(searchable)
     && /\bbirthdate\b/i.test(searchable)
     && /\btitle\b/i.test(searchable)
