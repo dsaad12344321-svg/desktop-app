@@ -2380,7 +2380,7 @@ export default function GuestNameExtractorPage() {
           <h2>البحث المتعدد</h2>
           <p className="muted">اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة، ثم اضغط على زر «بحث» لعرض النتائج.</p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
-            <button type="button" className="primary-button" onClick={() => setMultipleSearchQuery(query)} disabled={!query.trim() || busy}>بحث</button>
+            <button type="button" className="add-button" onClick={() => setMultipleSearchQuery(query)} disabled={!query.trim() || busy}>بحث</button>
             <button type="button" className="add-button" onClick={() => { setQuery(""); setMultipleSearchQuery(""); }} disabled={!query && !multipleSearchQuery}>مسح البحث</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("room")} disabled={!arrivals.length}>نسخ كل أرقام الغرف</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("confirmation")} disabled={!arrivals.length}>نسخ كل الأرقام التأكيدية</button>
