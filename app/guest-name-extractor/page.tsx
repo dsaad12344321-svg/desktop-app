@@ -634,6 +634,23 @@ function extractTravelWaysPeople(text: string, searchTerm: string) {
 
 function extractPeople(text: string, searchTerm: string, company = "", enableSunCheckInList = false, preserveDuplicateNames = false) {
   company = detectVoucherCompany(text, company);
+
+  // MTS / OTS Guest Voucher: each page contains one booking and a
+  // "Travellers" section with numbered entries such as:
+  // 1. Herr Spiegel Kevin (19.Jul.1997) or 1. Ms. Wagner Nicole (55).
+  if (/\bVoucher\s+Reference\s+No\.?\s*:/i.test(text) && /\bTravellers\s*:/i.test(text)) {
+    const travellerSection = text.match(/\bTravellers\s*:\s*\d+\s+persons?\s*([\s\S]*?)(?=\bDates\s*:|$)/i)?.[1] || "";
+    const mtsRow = /(?:^|\s)\d{1,2}\s*[.)-]\s*((?:Herr|Frau|Mr|Mrs|Ms|Miss|Mstr|Master)\.?\s+[\p{L}\p{M}'’.-]+(?:\s+[\p{L}\p{M}'’.-]+){1,5})\s*\(\s*(\d{1,2}\s*[.\/-]\s*[A-Za-z]{3,9}\s*[.\/-]\s*\d{4}|\d{1,2}\s*[.\/-]\s*\d{1,2}\s*[.\/-]\s*\d{2,4}|\d{1,3})\s*\)/giu;
+    const mtsPeople = Array.from(travellerSection.matchAll(mtsRow), (match) => {
+      const value = match[2].replace(/\s+/g, "");
+      const isAge = /^\d{1,3}$/.test(value);
+      return {
+        name: titleCaseName(match[1].replace(/\s+/g, " ").trim()),
+        dob: isAge ? "(Age: " + value + ")" : value.replace(/[\/-]/g, "."),
+      };
+    });
+    if (mtsPeople.length) return mtsPeople;
+  }
   const isTravelWaysReport = /travel\s*ways/i.test(company)
     || (/HOTEL\s+CONTRACT\s+EBD\s+LIST/i.test(text)
       && /\bOperator\b[\s\S]{0,250}\bVoucher\b/i.test(text));
@@ -1352,7 +1369,7 @@ function extractPeopleFromIndexedFile(
   const isMsg = file.extension.toLowerCase() === "msg";
   if (isMtsIndexedFile(file)) {
     const voucherPages = isMsg
-      ? (file.attachmentPages || []).filter((attachment) => /guest\s*voucher/i.test(attachment.name)).flatMap((attachment) => attachment.pages)
+      ? (file.attachmentPages || []).filter(isMtsVoucherAttachment).flatMap((attachment) => attachment.pages)
       : /guest\s*voucher/i.test(file.name) ? file.pages : [];
     if (!voucherPages.length) return [];
     const compactQuery = normalize(searchTerm).replace(/\s+/g, "");
@@ -1425,12 +1442,18 @@ function getMtsIndexedText(file: IndexedFile) {
   ].join("\n");
 }
 
+function isMtsVoucherAttachment(attachment: { name: string; pages: string[] }) {
+  return /guest\s*voucher/i.test(attachment.name)
+    || attachment.pages.some((page) => /\bVoucher\s+Reference\s+No\.?\s*:/i.test(page)
+      && /\bTravellers\s*:/i.test(page));
+}
+
 function getMtsVoucherCandidates(files: IndexedFile[]) {
   return files.filter(isMtsIndexedFile).flatMap((file) => {
     const candidates: { file: IndexedFile; pages: string[] }[] = [];
     if (file.extension.toLowerCase() === "msg") {
       for (const attachment of file.attachmentPages || []) {
-        if (/guest\s*voucher/i.test(attachment.name)) {
+        if (isMtsVoucherAttachment(attachment)) {
           candidates.push({ file, pages: attachment.pages.filter((page) => page.trim()) });
         }
       }
@@ -1466,55 +1489,61 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
     let voucherFile: IndexedFile | null = null;
     let people: MultipleGuest[] = [];
 
-    // MTS: first match the arrival guest against a named Guest Voucher.
-    const matchedVoucher = voucherCandidates.map((candidate) => ({
-      ...candidate,
-      matchedPage: candidate.pages.find((page) => queryIsBookingNumber
-        ? getMtsVoucherReference(page).replace(/-/g, "") === compact
-        : arrivalNameMatchesText(targetName, page)),
-    })).find((candidate) => Boolean(candidate.matchedPage));
+    // MTS priority: first find the exact numeric example.msg by matching
+    // the arrival-report guest name. Only if no numeric MSG matches do we
+    // search Guest Voucher PDFs / PDFs embedded in Outlook messages.
+    const matchedMessage = !queryIsBookingNumber
+      ? mtsMessages.find((candidate) =>
+          arrivalNameMatchesText(targetName, searchableText.get(candidate.id) || ""),
+        )
+      : mtsMessages.find((candidate) =>
+          candidate.name.replace(/\.msg$/i, "") === compact,
+        );
 
-    if (matchedVoucher?.matchedPage) {
-      voucherFile = matchedVoucher.file;
-      // Guest Voucher List is a collection: each page is a separate booking.
-      // Extract only the page containing this arrival guest/reference.
-      people = extractPeople(matchedVoucher.matchedPage, "", matchedVoucher.file.company, true, true);
-
-      // Numeric voucher references map to numeric MSG filenames (108633.msg).
-      // Alphanumeric booking references are resolved by matching the arrival
-      // guest name inside the numeric MSG files instead.
-      const reference = getMtsVoucherReference(matchedVoucher.matchedPage);
-      const numericReference = /^\d{5,12}$/.test(reference) ? reference : "";
-      const sameFolder = (candidate: IndexedFile) =>
-        candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase()
-        === matchedVoucher.file.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
-      const referenceMessage = numericReference
-        ? mtsMessages.find((candidate) =>
-            candidate.name.replace(/\.msg$/i, "") === numericReference && sameFolder(candidate),
-          ) || mtsMessages.find((candidate) => candidate.name.replace(/\.msg$/i, "") === numericReference)
-        : undefined;
-      // If no numeric reference match exists, search all numeric MSG files by
-      // the arrival guest name; otherwise retain the Guest Voucher as fallback.
-      const nameMatchedMessage = mtsMessages.find((candidate) =>
-        arrivalNameMatchesText(targetName, searchableText.get(candidate.id) || ""),
-      );
-      file = referenceMessage || nameMatchedMessage || matchedVoucher.file;
-    } else {
-      // Alternative: search every numeric MTS MSG for the arrival guest name.
-      const nameMatchedMessage = mtsMessages.find((candidate) =>
-        queryIsBookingNumber
-          ? candidate.name.replace(/\.msg$/i, "") === compact
-          : arrivalNameMatchesText(targetName, searchableText.get(candidate.id) || ""),
-      );
-      if (nameMatchedMessage) {
-        file = nameMatchedMessage;
-        const attachedVoucher = voucherCandidates.find((candidate) => candidate.file.id === nameMatchedMessage.id);
-        if (attachedVoucher) {
-          voucherFile = attachedVoucher.file;
-          people = attachedVoucher.pages
-            .filter((page) => arrivalNameMatchesText(targetName, page))
-            .flatMap((page) => extractPeople(page, "", nameMatchedMessage.company, true, true));
+    if (matchedMessage) {
+      file = matchedMessage;
+      const attachedVoucher = (matchedMessage.attachmentPages || []).find(isMtsVoucherAttachment);
+      if (attachedVoucher) {
+        const matchedPage = attachedVoucher.pages.find((page) =>
+          queryIsBookingNumber
+            ? getMtsVoucherReference(page).replace(/-/g, "") === compact
+            : arrivalNameMatchesText(targetName, page),
+        );
+        if (matchedPage) {
+          voucherFile = matchedMessage;
+          people = extractPeople(matchedPage, "", matchedMessage.company, true, true);
         }
+      }
+      // Some MSGs include the voucher data in a PDF attachment whose display
+      // filename is not "Guest Voucher"; the signature-based detection above
+      // still parses it. If no matching attachment page was found, do not
+      // silently switch to a different booking's guest list.
+    } else {
+      const matchedVoucher = voucherCandidates.map((candidate) => ({
+        ...candidate,
+        matchedPage: candidate.pages.find((page) => queryIsBookingNumber
+          ? getMtsVoucherReference(page).replace(/-/g, "") === compact
+          : arrivalNameMatchesText(targetName, page)),
+      })).find((candidate) => Boolean(candidate.matchedPage));
+
+      if (matchedVoucher?.matchedPage) {
+        voucherFile = matchedVoucher.file;
+        people = extractPeople(matchedVoucher.matchedPage, "", matchedVoucher.file.company, true, true);
+
+        // If the matched voucher page carries a numeric voucher reference,
+        // prefer its corresponding numeric MSG only after the name-first
+        // search has failed.
+        const reference = getMtsVoucherReference(matchedVoucher.matchedPage);
+        const numericReference = /^\d{5,12}$/.test(reference) ? reference : "";
+        const sameFolder = (candidate: IndexedFile) =>
+          candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase()
+          === matchedVoucher.file.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
+        const referenceMessage = numericReference
+          ? mtsMessages.find((candidate) =>
+              candidate.name.replace(/\.msg$/i, "") === numericReference && sameFolder(candidate),
+            ) || mtsMessages.find((candidate) => candidate.name.replace(/\.msg$/i, "") === numericReference)
+          : undefined;
+        file = referenceMessage || matchedVoucher.file;
       }
     }
 
