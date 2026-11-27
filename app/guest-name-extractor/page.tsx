@@ -1649,7 +1649,10 @@ export default function GuestNameExtractorPage() {
     async function restoreSession() {
       try {
         const savedState = JSON.parse(localStorage.getItem(GUEST_STATE_KEY) || "{}");
-        const savedNativePath = window.desktopBridge ? localStorage.getItem(NATIVE_FOLDER_KEY) || "" : "";
+        // Electron userData survives the random local server port on each launch.
+        const savedNativePath = window.desktopBridge
+          ? await window.desktopBridge.getSavedFolderPath().catch(() => localStorage.getItem(NATIVE_FOLDER_KEY) || "")
+          : "";
         if (!active) return;
         const savedArrivals = JSON.parse(localStorage.getItem(ARRIVAL_REPORT_KEY) || "[]");
         if (Array.isArray(savedArrivals)) setArrivals(savedArrivals as ArrivalRecord[]);
@@ -1915,6 +1918,7 @@ export default function GuestNameExtractorPage() {
     const indexed: IndexedFile[] = [];
     const failed: string[] = [];
     try {
+      await window.desktopBridge.saveFolderPath(rootPath);
       const entries = await window.desktopBridge.listFolderFiles(rootPath);
       const watchEnabled = await window.desktopBridge.watchFolder(rootPath);
       setProgress({ done: 0, total: entries.length });
@@ -2216,6 +2220,7 @@ export default function GuestNameExtractorPage() {
   async function removeSavedFolder() {
     if (!window.confirm("هل تريد إلغاء ربط مجلد الحجوزات؟ لن يتم حذف الملفات الأصلية من جهازك.")) return;
     await window.desktopBridge?.unwatchFolder();
+    await window.desktopBridge?.clearSavedFolderPath();
     setFiles([]);
     setQuery("");
     setSelected(null);
