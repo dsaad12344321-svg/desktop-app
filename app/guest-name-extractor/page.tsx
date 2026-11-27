@@ -228,7 +228,7 @@ function getNativeFolderMetadata(relativePath: string): { company: string; day?:
   return { company: parts.length > 1 ? parts[0] : "غير محددة" };
 }
 
-async function extractText(file: File, extension: string): Promise<{ content: string; pages: string[]; visualPages?: string[] }> {
+async function extractText(file: File, extension: string): Promise<{ content: string; pages: string[]; visualPages?: string[]; attachmentPages?: { name: string; pages: string[] }[] }> {
   // Images are indexed by filename and previewed directly; OCR is not attempted here.
   if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"].includes(extension)) {
     return { content: "", pages: [""] };
@@ -291,7 +291,7 @@ async function extractText(file: File, extension: string): Promise<{ content: st
     const msgReader = message as unknown as {
       getAttachment: (attachment: unknown) => { fileName?: string; content: Uint8Array };
     };
-    const attachmentPages: string[] = [];
+    const attachmentPages: { name: string; pages: string[] }[] = [];
     for (const attachment of attachmentRows) {
       const attachmentName = String(attachment.fileName || attachment.name || "").trim();
       const attachmentExtension = attachmentName.split(".").pop()?.toLowerCase() || "";
@@ -299,6 +299,7 @@ async function extractText(file: File, extension: string): Promise<{ content: st
         const extractedAttachment = msgReader.getAttachment(attachment);
         const attachmentBytes = new Uint8Array(extractedAttachment.content);
 
+        const extractedPages: string[] = [];
         if (attachmentExtension === "pdf") {
           const pdfjs = await import("pdfjs-dist");
           pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
@@ -326,10 +327,7 @@ async function extractText(file: File, extension: string): Promise<{ content: st
               }
               row.cells.push({ x: item.x, text: item.text });
             }
-            attachmentPages.push(visualRows
-              .sort((a, b) => b.y - a.y)
-              .map((row) => row.cells.sort((a, b) => a.x - b.x).map((cell) => cell.text).join(" "))
-              .join("\n"));
+            extractedPages.push(visualRows.sort((a, b) => b.y - a.y).map((row) => row.cells.sort((a, b) => a.x - b.x).map((cell) => cell.text).join(" ")).join("\n"));
           }
         } else if (attachmentExtension === "docx") {
           const mammoth = await import("mammoth/mammoth.browser");
@@ -339,16 +337,17 @@ async function extractText(file: File, extension: string): Promise<{ content: st
               attachmentBytes.byteOffset + attachmentBytes.byteLength,
             ) as ArrayBuffer,
           });
-          if (result.value?.trim()) attachmentPages.push(result.value);
+          if (result.value?.trim()) extractedPages.push(result.value);
         } else if (["txt", "csv", "xml", "html", "htm", "eml", "log"].includes(attachmentExtension)) {
           const text = new TextDecoder().decode(attachmentBytes);
-          if (text.trim()) attachmentPages.push(text);
-        }
+          if (text.trim()) extractedPages.push(text);
+        }        if (extractedPages.length) attachmentPages.push({ name: attachmentName, pages: extractedPages });
       } catch {
         // Keep the MSG searchable even if one attachment cannot be parsed.
       }
     }
-    return { content: [content, ...attachmentPages].join("\n"), pages: [content, ...attachmentPages] };
+    const flattenedAttachmentPages = attachmentPages.flatMap((attachment) => attachment.pages);
+    return { content: [content, ...flattenedAttachmentPages].join("\n"), pages: [content, ...flattenedAttachmentPages], attachmentPages };
   }
   if (extension === "pdf") {
     const pdfjs = await import("pdfjs-dist");
@@ -1231,7 +1230,7 @@ function isSunInternationalIndexedFile(file: SunIndexedFile | null | undefined) 
  * attachment pages before falling back to the email body.
  */
 function extractPeopleForMultipleView(
-  file: Pick<IndexedFile, "extension" | "pages" | "visualPages" | "content" | "company" | "name" | "path">,
+  file: Pick<IndexedFile, "extension" | "pages" | "visualPages" | "content" | "company" | "name" | "path" | "attachmentPages">,
   searchTerm: string,
   enableSunCheckInList = false,
 ) {
@@ -1250,12 +1249,14 @@ function extractPeopleForMultipleView(
   }
 
   if (isMts) {
-    // MTS bookings commonly arrive as Outlook MSG files with voucher PDFs.
-    // Search the attached voucher pages for the requested booking reference
-    // or guest before extracting, so unrelated bookings in a batch are ignored.
+    const namedVoucherPages = isMsg
+      ? (file.attachmentPages || []).filter((attachment) => /guest\s*voucher/i.test(attachment.name)).flatMap((attachment) => attachment.pages)
+      : [];
     const sourcePages = isMsg
-      ? file.pages.slice(1).filter((page) => page.trim())
-      : (file.visualPages?.length ? file.visualPages : file.pages).filter((page) => page.trim());
+      ? namedVoucherPages.filter((page) => page.trim())
+      : /guest\s*voucher/i.test(file.name)
+        ? (file.visualPages?.length ? file.visualPages : file.pages).filter((page) => page.trim())
+        : [];
     const compactQuery = normalize(searchTerm).replace(/\s+/g, "");
     const queryIsNumeric = /^\d{5,12}$/.test(compactQuery);
     const filenameMatchesBooking = queryIsNumeric
@@ -1343,11 +1344,17 @@ function extractPeopleForMultipleView(
  * page-aware SUN resolver above is intentionally limited to Multiple View.
  */
 function extractPeopleFromIndexedFile(
-  file: Pick<IndexedFile, "extension" | "pages" | "content" | "company">,
+  file: Pick<IndexedFile, "extension" | "pages" | "content" | "company" | "name" | "path" | "attachmentPages">,
   searchTerm: string,
   enableSunCheckInList = false,
 ) {
   const isMsg = file.extension.toLowerCase() === "msg";
+  if (isMtsIndexedFile(file)) {
+    const voucherPages = isMsg
+      ? (file.attachmentPages || []).filter((attachment) => /guest\s*voucher/i.test(attachment.name)).flatMap((attachment) => attachment.pages)
+      : /guest\s*voucher/i.test(file.name) ? file.pages : [];
+    return voucherPages.flatMap((page) => extractPeople(page, searchTerm, file.company, enableSunCheckInList, true));
+  }
   if (!isMsg) {
     const source = /alltour/i.test(file.company)
       ? file.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
@@ -1375,6 +1382,7 @@ export default function GuestNameExtractorPage() {
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [query, setQuery] = useState("");
   const [multipleSearchQuery, setMultipleSearchQuery] = useState("");
+  const [multipleDraftQuery, setMultipleDraftQuery] = useState("");
   const [viewMode, setViewMode] = useState<"single" | "multiple">("single");
 
   const [arrivalFrom, setArrivalFrom] = useState("");
@@ -1416,9 +1424,7 @@ export default function GuestNameExtractorPage() {
 
   useEffect(() => {
     if (!autoOpenMtsVoucher || !selected || !isMtsIndexedFile(selected) || !msgPreview) return;
-    const voucher = msgPreview.attachments.find((attachment) =>
-      attachment.type === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf"),
-    );
+    const voucher = msgPreview.attachments.find((attachment) => /guest\s*voucher/i.test(attachment.name) && (attachment.type === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf")));
     setAutoOpenMtsVoucher(false);
     if (voucher) {
       setActiveAttachment(voucher);
@@ -1513,7 +1519,7 @@ export default function GuestNameExtractorPage() {
     const isArrivalNumberSearch = linkedArrivalGuests.length > 0;
     const matchingArrivalNames = linkedArrivalGuests.map((item) => item.name);
 
-    return files.flatMap((item) => {
+    const matchedResults = files.flatMap((item) => {
       const matchedPages = item.pages.reduce<number[]>((acc, page, index) => {
         const searchable = [item.name, item.path, item.company, page].join(" ");
         const matchesLinkedGuest = matchingArrivalNames.some((name) => arrivalNameMatchesText(name, searchable));
@@ -1527,6 +1533,14 @@ export default function GuestNameExtractorPage() {
         matchedPages.push(1);
       }
       return matchedPages.length ? [{ ...item, matchedPages }] : [];
+    });
+    return matchedResults.filter((item) => {
+      if (!isMtsIndexedFile(item)) return true;
+      const folderPath = item.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
+      const folderFiles = files.filter((candidate) => isMtsIndexedFile(candidate) && candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase() === folderPath);
+      const bookingMessages = folderFiles.filter((candidate) => candidate.extension.toLowerCase() === "msg" && /^\\d+\\.msg$/i.test(candidate.name));
+      if (bookingMessages.length) return item.extension.toLowerCase() === "msg" && /^\\d+\\.msg$/i.test(item.name);
+      return /guest\\s*voucher/i.test(item.name) && ["pdf", "msg"].includes(item.extension.toLowerCase());
     });
   }, [files, query, arrivals]);
 
@@ -1584,10 +1598,10 @@ export default function GuestNameExtractorPage() {
         : files.filter((candidate) => candidate.pages.some((page) =>
             matchesSearchText([candidate.name, candidate.path, candidate.company, page].join(" "), term)));
       const mtsFiles = matchingFiles.filter((candidate) => isMtsIndexedFile(candidate));
-      const prioritizedMtsFiles = [...mtsFiles].sort((left, right) => {
-        const priority = (candidate: IndexedFile) => candidate.extension === "msg" ? 0 : candidate.extension === "pdf" ? 1 : 2;
-        return priority(left) - priority(right);
-      });
+      const folderPath = mtsFiles[0]?.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
+      const folderFiles = folderPath ? files.filter((candidate) => isMtsIndexedFile(candidate) && candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase() === folderPath) : [];
+      const bookingMessages = folderFiles.filter((candidate) => candidate.extension.toLowerCase() === "msg" && /^\\d+\\.msg$/i.test(candidate.name));
+      const prioritizedMtsFiles = bookingMessages.length ? bookingMessages : folderFiles.filter((candidate) => /guest\\s*voucher/i.test(candidate.name) && ["pdf", "msg"].includes(candidate.extension.toLowerCase()));
       const sunFiles = matchingFiles.filter((candidate) => isSunInternationalIndexedFile(candidate));
       const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
         const priority = (candidate: IndexedFile) => {
@@ -1602,7 +1616,7 @@ export default function GuestNameExtractorPage() {
         };
         return priority(left) - priority(right);
       });
-      const file = prioritizedMtsFiles[0] || prioritizedSunFiles[0] || matchingFiles[0] || null;
+      const file = prioritizedMtsFiles[0] || (mtsFiles.length ? null : prioritizedSunFiles[0] || matchingFiles[0] || null);
       const people = file ? extractPeopleForMultipleView(file, arrival?.name || term, true) : [];
       // Preserve repeated guest rows for MTS, SUN and W2M; each row is a traveler.
       const uniquePeople = file && (isMtsIndexedFile(file) || isSunInternationalIndexedFile(file) || isW2mIndexedFile(file))
@@ -1715,7 +1729,7 @@ export default function GuestNameExtractorPage() {
         const folderMetadata = getFolderMetadata(path);
         indexed.push({ id: path + "-" + file.lastModified + "-" + index, name: file.name, path,
           ...folderMetadata, extension, size: file.size, content: extracted.content,
-          pages: extracted.pages, visualPages: extracted.visualPages, file });
+          pages: extracted.pages, visualPages: extracted.visualPages, attachmentPages: extracted.attachmentPages, file });
       } catch { failed.push(path); }
       setProgress({ done: index + 1, total: readable.length });
     }
@@ -1774,6 +1788,7 @@ export default function GuestNameExtractorPage() {
             content: extracted.content,
             pages: extracted.pages,
             visualPages: extracted.visualPages,
+            attachmentPages: extracted.attachmentPages,
             file,
           });
         } catch {
@@ -2015,6 +2030,7 @@ export default function GuestNameExtractorPage() {
           const extracted = msgReader.getAttachment(row);
           const name = String(extracted.fileName || row.fileName || row.name || "");
           const declaredMime = String(row.attachMimeTag || "").split(";")[0].trim().toLowerCase();
+          if (!/guest\s*voucher/i.test(name)) continue;
           if (!name.toLowerCase().endsWith(".pdf") && declaredMime !== "application/pdf") continue;
           voucherBlob = new Blob([new Uint8Array(extracted.content).buffer as ArrayBuffer], { type: "application/pdf" });
           break;
@@ -2378,16 +2394,16 @@ export default function GuestNameExtractorPage() {
         </section>
         {viewMode === "multiple" && <section className="panel">
           <h2>البحث المتعدد</h2>
-          <p className="muted">اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة، ثم اضغط على زر «بحث» لعرض النتائج.</p>
+          <p className="muted">هذا البحث مستقل عن Single View. اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة، ثم اضغط «بحث» لعرض النتائج.</p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
-            <button type="button" className="add-button" onClick={() => setMultipleSearchQuery(query)} disabled={!query.trim() || busy}>بحث</button>
-            <button type="button" className="add-button" onClick={() => { setQuery(""); setMultipleSearchQuery(""); }} disabled={!query && !multipleSearchQuery}>مسح البحث</button>
+            <button type="button" className="add-button" onClick={() => setMultipleSearchQuery(multipleDraftQuery)} disabled={!query.trim() || busy}>بحث</button>
+            <button type="button" className="add-button" onClick={() => { setMultipleDraftQuery(""); setMultipleSearchQuery(""); }} disabled={!multipleDraftQuery && !multipleSearchQuery}>مسح البحث</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("room")} disabled={!arrivals.length}>نسخ كل أرقام الغرف</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("confirmation")} disabled={!arrivals.length}>نسخ كل الأرقام التأكيدية</button>
           </div>
           {multipleCopyStatus && <p className="saved-hint" role="status">{multipleCopyStatus}</p>}
-          <textarea value={query} onChange={(event) => setQuery(event.target.value)}
-            placeholder="مثال: 0115, 209682, Fazliji, 0166" aria-label="البحث في عدة غرف وحجوزات"
+          <textarea value={multipleDraftQuery} onChange={(event) => setMultipleDraftQuery(event.target.value)}
+             placeholder="مثال: 0115, 209682, Fazliji, 0166" aria-label="البحث في عدة غرف وحجوزات"
             rows={3} style={{ width: "100%", border: "1px solid #cbd6e2", borderRadius: 10, padding: 12, font: "inherit", resize: "vertical" }} />
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginTop: 10 }}>
             <label htmlFor="multiple-sort" style={{ fontSize: 13, color: "#526174" }}>ترتيب الغرف:</label>
