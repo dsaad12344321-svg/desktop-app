@@ -1334,7 +1334,13 @@ function extractPeopleFromIndexedFile(
 export default function GuestNameExtractorPage() {
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [query, setQuery] = useState("");
+  const [multipleSearchQuery, setMultipleSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"single" | "multiple">("single");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setMultipleSearchQuery(query), 600);
+    return () => window.clearTimeout(timer);
+  }, [query]);
   const [arrivalFrom, setArrivalFrom] = useState("");
   const [arrivalTo, setArrivalTo] = useState("");
   const [arrivalCompanyFilter, setArrivalCompanyFilter] = useState("all");
@@ -1528,7 +1534,7 @@ export default function GuestNameExtractorPage() {
   }, [arrivals, arrivalFrom, arrivalTo, arrivalCompanyFilter, arrivalCompanies]);
 
   const multipleCards = useMemo(() => {
-    const terms = query.split(/[，,;؛\\n]+/).map((part) => part.trim()).filter(Boolean);
+    const terms = multipleSearchQuery.split(/[，,;؛\\n]+/).map((part) => part.trim()).filter(Boolean);
     return terms.map((term, index) => {
       const compact = normalize(term).replace(/\\s+/g, "");
       const arrival = arrivals.find((item) =>
@@ -1569,6 +1575,13 @@ export default function GuestNameExtractorPage() {
             all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
               && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
       return { key: index + "-" + compact, term, arrival, file, people: uniquePeople };
+    }).filter((card) => {
+      if (arrivalCompanyFilter === "all") return true;
+      const arrivalCompany = card.arrival ? arrivalCompanies.get(card.arrival.confirmationNo) : "";
+      const company = arrivalCompany && arrivalCompany !== "غير محددة"
+        ? arrivalCompany
+        : card.file?.company || "غير محددة";
+      return company === arrivalCompanyFilter;
     }).sort((left, right) => {
       if (multipleSort === "company") {
         const companyCompare = (left.file?.company || "غير محددة").localeCompare(
@@ -1583,7 +1596,7 @@ export default function GuestNameExtractorPage() {
       }
       return 0;
     });
-  }, [query, arrivals, files, multipleSort]);
+  }, [multipleSearchQuery, arrivals, files, multipleSort, arrivalCompanyFilter, arrivalCompanies]);
 
   const companies = useMemo(() => new Set(files.map((file) => file.company).filter((name) => name !== "غير محددة")).size, [files]);
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files]);
@@ -2329,7 +2342,7 @@ export default function GuestNameExtractorPage() {
         </section>
         {viewMode === "multiple" && <section className="panel">
           <h2>البحث المتعدد</h2>
-          <p className="muted">اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة.</p>
+          <p className="muted">اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة. يبدأ البحث بعد التوقف عن الكتابة لمدة 0.6 ثانية.</p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("room")} disabled={!arrivals.length}>نسخ كل أرقام الغرف</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("confirmation")} disabled={!arrivals.length}>نسخ كل الأرقام التأكيدية</button>
@@ -2347,7 +2360,8 @@ export default function GuestNameExtractorPage() {
               <option value="room">حسب رقم الغرفة</option>
             </select>
           </div>
-          {query.trim() && <p className="saved-hint">عدد مربعات البحث: {multipleCards.length}</p>}
+          {multipleSearchQuery.trim() && <p className="saved-hint">عدد مربعات البحث بعد الفلترة: {multipleCards.length}</p>}
+          {multipleSearchQuery.trim() && multipleCards.length === 0 && <p className="empty-exclusions">لا توجد مربعات مطابقة للشركة المحددة أو لم يتم العثور على نتائج.</p>}
           {multipleCards.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,390px),1fr))", gap: 12, marginTop: 14 }}>
             {multipleCards.map((card) => {
               const isGreen = greenCards.includes(card.key);
