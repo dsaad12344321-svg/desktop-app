@@ -1428,6 +1428,7 @@ type MultipleCard = {
   arrival: ArrivalRecord | null;
   file: IndexedFile | null;
   voucherFile?: IndexedFile | null;
+  voucherPageNumber?: number;
   people: MultipleGuest[];
 };
 
@@ -1460,17 +1461,25 @@ function isMtsVoucherAttachment(attachment: { name: string; pages: string[] }) {
 
 function getMtsVoucherCandidates(files: IndexedFile[]) {
   return files.filter(isMtsIndexedFile).flatMap((file) => {
-    const candidates: { file: IndexedFile; pages: string[] }[] = [];
+    const candidates: { file: IndexedFile; pages: string[]; pageNumbers: number[] }[] = [];
     if (file.extension.toLowerCase() === "msg") {
       for (const attachment of file.attachmentPages || []) {
         if (isMtsVoucherAttachment(attachment)) {
-          candidates.push({ file, pages: attachment.pages.filter((page) => page.trim()) });
+          const indexedPages = attachment.pages
+            .map((page, index) => ({ page, pageNumber: index + 1 }))
+            .filter((entry) => entry.page.trim());
+          candidates.push({ file, pages: indexedPages.map((entry) => entry.page), pageNumbers: indexedPages.map((entry) => entry.pageNumber) });
         }
       }
     } else if (file.extension.toLowerCase() === "pdf" && /guest\s*voucher/i.test(file.name)) {
+      const sourcePages = file.visualPages?.length ? file.visualPages : file.pages;
+      const indexedPages = sourcePages
+        .map((page, index) => ({ page, pageNumber: index + 1 }))
+        .filter((entry) => entry.page.trim());
       candidates.push({
         file,
-        pages: (file.visualPages?.length ? file.visualPages : file.pages).filter((page) => page.trim()),
+        pages: indexedPages.map((entry) => entry.page),
+        pageNumbers: indexedPages.map((entry) => entry.pageNumber),
       });
     }
     return candidates;
@@ -1508,6 +1517,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
     const queryIsBookingNumber = /^\d{5,12}$/.test(compact);
     let file: IndexedFile | null = null;
     let voucherFile: IndexedFile | null = null;
+    let voucherPageNumber: number | undefined;
     let people: MultipleGuest[] = [];
 
     // MTS priority: first find the exact numeric example.msg by matching
@@ -1527,40 +1537,52 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
       // The arrival guest's numeric MSG is the primary booking identity.
       // Once found, locate the matching page in the separate Guest Voucher
       // List or in this MSG's embedded PDF to extract all travellers.
-      const matchingVoucherPage = voucherCandidates.map((candidate) => ({
-        ...candidate,
-        matchedPage: candidate.pages.find((page) =>
-          queryIsBookingNumber
-            ? getMtsVoucherReference(page).replace(/-/g, "") === compact
-            : arrivalNameMatchesText(targetName, page),
-        ),
-      })).find((candidate) => Boolean(candidate.matchedPage));
-
-      if (matchingVoucherPage?.matchedPage) {
-        voucherFile = matchingVoucherPage.file;
-        people = extractPeople(matchingVoucherPage.matchedPage, "", matchingVoucherPage.file.company, true, true);
-      } else {
-        const attachedVoucher = (matchedMessage.attachmentPages || []).find(isMtsVoucherAttachment);
-        const matchedPage = attachedVoucher?.pages.find((page) =>
+      const matchingVoucherPage = voucherCandidates.map((candidate) => {
+        const matchedIndex = candidate.pages.findIndex((page) =>
           queryIsBookingNumber
             ? getMtsVoucherReference(page).replace(/-/g, "") === compact
             : arrivalNameMatchesText(targetName, page),
         );
+        return {
+          ...candidate,
+          matchedPage: matchedIndex >= 0 ? candidate.pages[matchedIndex] : undefined,
+          matchedPageNumber: matchedIndex >= 0 ? candidate.pageNumbers[matchedIndex] : undefined,
+        };
+      }).find((candidate) => Boolean(candidate.matchedPage));
+
+      if (matchingVoucherPage?.matchedPage) {
+        voucherFile = matchingVoucherPage.file;
+        voucherPageNumber = matchingVoucherPage.matchedPageNumber;
+        people = extractPeople(matchingVoucherPage.matchedPage, "", matchingVoucherPage.file.company, true, true);
+      } else {
+        const attachedVoucher = (matchedMessage.attachmentPages || []).find(isMtsVoucherAttachment);
+        const matchedPageIndex = attachedVoucher?.pages.findIndex((page) =>
+          queryIsBookingNumber
+            ? getMtsVoucherReference(page).replace(/-/g, "") === compact
+            : arrivalNameMatchesText(targetName, page),
+        ) ?? -1;
+        const matchedPage = matchedPageIndex >= 0 ? attachedVoucher?.pages[matchedPageIndex] : undefined;
         if (matchedPage) {
           voucherFile = matchedMessage;
+          voucherPageNumber = matchedPageIndex + 1;
           people = extractPeople(matchedPage, "", matchedMessage.company, true, true);
         }
       }
     } else {
-      const matchedVoucher = voucherCandidates.map((candidate) => ({
-        ...candidate,
-        matchedPage: candidate.pages.find((page) => queryIsBookingNumber
+      const matchedVoucher = voucherCandidates.map((candidate) => {
+        const matchedIndex = candidate.pages.findIndex((page) => queryIsBookingNumber
           ? getMtsVoucherReference(page).replace(/-/g, "") === compact
-          : arrivalNameMatchesText(targetName, page)),
-      })).find((candidate) => Boolean(candidate.matchedPage));
+          : arrivalNameMatchesText(targetName, page));
+        return {
+          ...candidate,
+          matchedPage: matchedIndex >= 0 ? candidate.pages[matchedIndex] : undefined,
+          matchedPageNumber: matchedIndex >= 0 ? candidate.pageNumbers[matchedIndex] : undefined,
+        };
+      }).find((candidate) => Boolean(candidate.matchedPage));
 
       if (matchedVoucher?.matchedPage) {
         voucherFile = matchedVoucher.file;
+        voucherPageNumber = matchedVoucher.matchedPageNumber;
         people = extractPeople(matchedVoucher.matchedPage, "", matchedVoucher.file.company, true, true);
 
         // Resolve the exact booking MSG from the voucher reference, whether
@@ -1615,7 +1637,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
       : people.filter((person, personIndex, all) =>
           all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
             && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
-    return { key: index + "-" + compact, term, arrival, file, voucherFile, people: uniquePeople };
+    return { key: index + "-" + compact, term, arrival, file, voucherFile, voucherPageNumber, people: uniquePeople };
   });
 }
 
@@ -2227,10 +2249,10 @@ export default function GuestNameExtractorPage() {
     openPreview(item);
   }
 
-  async function printMtsVoucher(item: IndexedFile) {
+  async function printMtsVoucher(item: IndexedFile, defaultPageNumber = 1) {
     const pageInput = window.prompt(
-      "أدخل رقم صفحة الحجز المطلوب طباعتها من Guest Voucher (حسب ترتيب صفحات PDF):",
-      "1",
+      "رقم الصفحة المطابقة للحجز من Guest Voucher (يمكنك تعديله إذا لزم الأمر):",
+      String(defaultPageNumber),
     );
     if (pageInput === null) return;
     const pageNumber = Number(pageInput.trim());
@@ -2700,7 +2722,7 @@ export default function GuestNameExtractorPage() {
                     {isMtsIndexedFile(card.file) ? <>
                       {card.file.extension.toLowerCase() === "msg" && <button type="button" className="add-button" onClick={() => void openMtsOutlookFile(card.file!)}>فتح ملف Outlook</button>}
                       <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...(card.voucherFile || card.file)!, matchedPages: [1] })}>استعراض الفاوتشر</button>
-                      <button type="button" className="add-button" onClick={() => void printMtsVoucher((card.voucherFile || card.file)!)}>طباعة الفاوتشر</button>
+                      <button type="button" className="add-button" onClick={() => void printMtsVoucher((card.voucherFile || card.file)!, card.voucherPageNumber || 1)}>طباعة الفاوتشر</button>
                     </> : <>
                       {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(card.file!.path)}>مكان الملف</button>}
                       <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [1] })}>معاينة واستخراج</button>
