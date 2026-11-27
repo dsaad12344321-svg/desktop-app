@@ -1164,7 +1164,7 @@ function isMtsIndexedFile(file: Pick<IndexedFile, "company" | "content" | "pages
   if (!file) return false;
   const company = normalize(file.company);
   const searchable = [file.name, file.path, file.content, ...file.pages].join(" ");
-  return company === "mts" || company.startsWith("mts globe") || /\bmts\s*globe\b|mtsglobe/i.test(searchable);
+  return company === "mts" || company.startsWith("mts ") || /\bmts\s*globe\b|mtsglobe/i.test(searchable);
 }
 
 function isSunInternationalIndexedFile(file: SunIndexedFile | null | undefined) {
