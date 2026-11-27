@@ -1379,6 +1379,169 @@ function extractPeopleFromIndexedFile(
   return attachmentPages.flatMap((page) => extractPeople(page, searchTerm, file.company, enableSunCheckInList));
 }
 
+
+type MultipleGuest = { name: string; dob: string };
+type MultipleCard = {
+  key: string;
+  term: string;
+  arrival: ArrivalRecord | null;
+  file: IndexedFile | null;
+  voucherFile?: IndexedFile | null;
+  people: MultipleGuest[];
+};
+
+function getMtsVoucherReference(text: string) {
+  const patterns = [
+    /\b(?:booking|reservation|confirmation)\s*(?:number|no\.?|#|id|code|reference|ref\.?)?\s*[:#-]?\s*([A-Z0-9-]{5,})/gi,
+    /\b(?:voucher|reference|ref)\s*(?:number|no\.?|#|id|code)?\s*[:#-]?\s*([A-Z0-9-]{5,})/gi,
+  ];
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      const value = normalize(match[1]).replace(/[^a-z0-9]/g, "");
+      if (/^\d{5,12}$/.test(value)) return value;
+    }
+  }
+  return "";
+}
+
+function getMtsIndexedText(file: IndexedFile) {
+  return [
+    file.name,
+    file.path,
+    file.content,
+    ...file.pages,
+    ...(file.attachmentPages || []).flatMap((attachment) => [attachment.name, ...attachment.pages]),
+  ].join("\n");
+}
+
+function getMtsVoucherCandidates(files: IndexedFile[]) {
+  return files.filter(isMtsIndexedFile).flatMap((file) => {
+    const candidates: { file: IndexedFile; pages: string[] }[] = [];
+    if (file.extension.toLowerCase() === "msg") {
+      for (const attachment of file.attachmentPages || []) {
+        if (/guest\s*voucher/i.test(attachment.name)) {
+          candidates.push({ file, pages: attachment.pages.filter((page) => page.trim()) });
+        }
+      }
+    } else if (file.extension.toLowerCase() === "pdf" && /guest\s*voucher/i.test(file.name)) {
+      candidates.push({
+        file,
+        pages: (file.visualPages?.length ? file.visualPages : file.pages).filter((page) => page.trim()),
+      });
+    }
+    return candidates;
+  });
+}
+
+function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals: ArrivalRecord[]): MultipleCard[] {
+  const terms = searchQuery.split(/[，,;؛\n]+/).map((part) => part.trim()).filter(Boolean);
+  const mtsFiles = files.filter(isMtsIndexedFile);
+  const mtsMessages = mtsFiles.filter((file) =>
+    file.extension.toLowerCase() === "msg" && /^\d+\.msg$/i.test(file.name),
+  );
+  const voucherCandidates = getMtsVoucherCandidates(files);
+  const searchableText = new Map(files.map((file) => [file.id, getMtsIndexedText(file)]));
+
+  return terms.map((term, index) => {
+    const compact = normalize(term).replace(/\s+/g, "");
+    const arrival = arrivals.find((item) =>
+      normalize(item.roomNo).replace(/\s+/g, "") === compact
+      || normalize(item.confirmationNo).replace(/\s+/g, "") === compact
+      || (/[a-z\p{L}]/iu.test(term) && normalize(item.name).includes(normalize(term)))
+    ) || null;
+
+    const targetName = arrival?.name || term;
+    const queryIsBookingNumber = /^\d{5,12}$/.test(compact);
+    let file: IndexedFile | null = null;
+    let voucherFile: IndexedFile | null = null;
+    let people: MultipleGuest[] = [];
+
+    // MTS: identify the correct Guest Voucher by the arrival guest's name first.
+    // Only after a voucher match do we resolve its booking number to a numeric MSG.
+    const matchedVoucher = voucherCandidates.find((candidate) =>
+      candidate.pages.some((page) => queryIsBookingNumber
+        ? getMtsVoucherReference(page) === compact
+        : arrivalNameMatchesText(targetName, page)),
+    );
+
+    if (matchedVoucher) {
+      voucherFile = matchedVoucher.file;
+      const matchedVoucherPages = matchedVoucher.pages.filter((page) => queryIsBookingNumber
+        ? getMtsVoucherReference(page) === compact
+        : arrivalNameMatchesText(targetName, page));
+      people = matchedVoucherPages.flatMap((page) =>
+        extractPeople(page, "", matchedVoucher.file.company, true, true),
+      );
+
+      const reference = matchedVoucherPages.map(getMtsVoucherReference).find(Boolean)
+        || getMtsVoucherReference(matchedVoucher.file.name);
+      const sameVoucherFolder = (candidate: IndexedFile) =>
+        candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase()
+        === matchedVoucher.file.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
+      const exactReferenceMessage = reference
+        ? mtsMessages.find((candidate) =>
+            candidate.name.replace(/\.msg$/i, "") === reference && sameVoucherFolder(candidate),
+          ) || mtsMessages.find((candidate) => candidate.name.replace(/\.msg$/i, "") === reference)
+        : undefined;
+      const nameMatchedMessage = mtsMessages.find((candidate) =>
+        arrivalNameMatchesText(targetName, searchableText.get(candidate.id) || ""),
+      );
+      file = exactReferenceMessage || nameMatchedMessage || matchedVoucher.file;
+    } else {
+      // Alternative MTS route: if a separate Guest Voucher cannot be found,
+      // search every numeric booking MSG for the actual arrival guest's name.
+      const nameMatchedMessage = mtsMessages.find((candidate) =>
+        queryIsBookingNumber
+          ? candidate.name.replace(/\.msg$/i, "") === compact
+          : arrivalNameMatchesText(targetName, searchableText.get(candidate.id) || ""),
+      );
+      if (nameMatchedMessage) {
+        file = nameMatchedMessage;
+        const attachedVoucher = voucherCandidates.find((candidate) => candidate.file.id === nameMatchedMessage.id);
+        if (attachedVoucher) {
+          voucherFile = attachedVoucher.file;
+          people = attachedVoucher.pages
+            .filter((page) => arrivalNameMatchesText(targetName, page))
+            .flatMap((page) => extractPeople(page, "", nameMatchedMessage.company, true, true));
+        }
+      }
+    }
+
+    // Non-MTS supplier lookup remains unchanged, but searchable text is computed once per file.
+    if (!file && !mtsFiles.length) {
+      const matchingFiles = files.filter((candidate) => {
+        const text = searchableText.get(candidate.id) || "";
+        return arrival
+          ? arrivalNameMatchesText(arrival.name, text)
+          : matchesSearchText(text, term);
+      });
+      const sunFiles = matchingFiles.filter(isSunInternationalIndexedFile);
+      const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
+        const priority = (candidate: IndexedFile) => {
+          if (candidate.extension !== "pdf") return candidate.extension === "msg" ? 4 : 5;
+          const filename = candidate.name.split(/[\\/]/).pop() || candidate.name;
+          if (/^hotel2sejour\.pdf$/i.test(filename)) return 0;
+          if (/^final\.pdf$/i.test(filename)) return 1;
+          if (/^reservations\s*\(\s*\d+\s*\)\.pdf$/i.test(filename)) return 2;
+          if (/^\d+\.pdf$/i.test(filename)) return 3;
+          if (/\bHOTEL\s+C\/IN\s+LIST\b/i.test(candidate.content + " " + candidate.pages.join(" "))) return 4;
+          return 5;
+        };
+        return priority(left) - priority(right);
+      });
+      file = prioritizedSunFiles[0] || matchingFiles[0] || null;
+      people = file ? extractPeopleForMultipleView(file, targetName, true) : [];
+    }
+
+    const uniquePeople = file && (isMtsIndexedFile(file) || isSunInternationalIndexedFile(file) || isW2mIndexedFile(file))
+      ? people
+      : people.filter((person, personIndex, all) =>
+          all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
+            && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
+    return { key: index + "-" + compact, term, arrival, file, voucherFile, people: uniquePeople };
+  });
+}
+
 export default function GuestNameExtractorPage() {
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [query, setQuery] = useState("");
@@ -1434,97 +1597,44 @@ export default function GuestNameExtractorPage() {
       setAttachmentSearchStatus("");
       setAttachmentPdfSearchTerm("");
     } else {
-      setMsgPreviewError("تم فتح رسالة MTS، لكن لم يتم العثور على ملف PDF مرفق بها.");
+     const [multipleCardsData, setMultipleCardsData] = useState<MultipleCard[]>([]);
+  const [multipleSearching, setMultipleSearching] = useState(false);
+  const multipleCards = useMemo(() => multipleCardsData.filter((card) => {
+    if (arrivalCompanyFilter === "all") return true;
+    const arrivalCompany = card.arrival ? arrivalCompanies.get(card.arrival.confirmationNo) : "";
+    const company = arrivalCompany && arrivalCompany !== "غير محددة"
+      ? arrivalCompany
+      : card.file?.company || "غير محددة";
+    return company === arrivalCompanyFilter;
+  }).sort((left, right) => {
+    if (multipleSort === "company") {
+      const companyCompare = (left.file?.company || "غير محددة").localeCompare(
+        right.file?.company || "غير محددة", "ar", { sensitivity: "base" },
+      );
+      if (companyCompare) return companyCompare;
     }
-  }, [autoOpenMtsVoucher, selected, msgPreview]);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [restoreComplete, setRestoreComplete] = useState(false);
-  const [storageMessage, setStorageMessage] = useState("جارٍ استعادة المجلد المحفوظ...");
-  const [arrivals, setArrivals] = useState<ArrivalRecord[]>([]);
-  const [arrivalReportName, setArrivalReportName] = useState("");
-  const [arrivalStatus, setArrivalStatus] = useState("");
-  const [arrivalBusy, setArrivalBusy] = useState(false);
-  const arrivalInputRef = useRef<HTMLInputElement>(null);
-  const nativeScanInProgressRef = useRef(false);
-
-  const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => { setIsDesktop(Boolean(window.desktopBridge)); }, []);
-
-  useEffect(() => {
-    if (!isDesktop || !nativeFolderPath || !window.desktopBridge) return;
-    // Folder watcher notifications must never trigger a full re-index.
-    // Searching is always performed against the in-memory index loaded once
-    // when the app opens. The user can explicitly refresh if files changed.
-    const unsubscribe = window.desktopBridge.onFolderChanged(() => {
-      setStorageMessage("تم رصد تغيير في مجلد الحجوزات. نتائج البحث الحالية تستخدم الفهرس المحمّل؛ اضغط «فحص التحديثات» فقط إذا أردت إعادة الفهرسة.");
-    });
-    return () => {
-      unsubscribe();
-      void window.desktopBridge?.unwatchFolder();
-    };
-  }, [isDesktop, nativeFolderPath]);
-
-  useEffect(() => {
-    let active = true;
-    async function restoreSession() {
-      try {
-        const savedState = JSON.parse(localStorage.getItem(GUEST_STATE_KEY) || "{}");
-        const savedNativePath = window.desktopBridge ? localStorage.getItem(NATIVE_FOLDER_KEY) || "" : "";
-        if (!active) return;
-        const savedArrivals = JSON.parse(localStorage.getItem(ARRIVAL_REPORT_KEY) || "[]");
-        if (Array.isArray(savedArrivals)) setArrivals(savedArrivals as ArrivalRecord[]);
-        setFolderName(String(savedState.folderName || ""));
-        setQuery(String(savedState.query || ""));
-        setCurrentPage(Math.max(1, Number(savedState.currentPage) || 1));
-        setNativeFolderPath(savedNativePath);
-        setStorageMessage(savedNativePath
-          ? "تم استعادة مسار مجلد الحجوزات. جارٍ قراءة الملفات الأصلية مباشرة..."
-          : "اختر مجلد الحجوزات للبدء. لا يتم إنشاء قاعدة بيانات أو حفظ نسخ من الملفات.");
-        if (savedNativePath && window.desktopBridge) void scanNativeFolder(savedNativePath);
-      } catch {
-        if (active) setStorageMessage("تعذرت استعادة مسار مجلد الحجوزات. اختر المجلد مرة أخرى.");
-      } finally {
-        if (active) setRestoreComplete(true);
-      }
+    if (multipleSort === "room" || multipleSort === "company") {
+      return (left.arrival?.roomNo || "").localeCompare(right.arrival?.roomNo || "", undefined, { numeric: true });
     }
-    void restoreSession();
-    return () => { active = false; };
-  }, []);
+    return 0;
+  }), [multipleCardsData, multipleSort, arrivalCompanyFilter, arrivalCompanies]);
 
-  useEffect(() => {
-    if (!restoreComplete) return;
+  async function runMultipleSearch() {
+    const searchText = multipleDraftQuery.trim();
+    if (!searchText || multipleSearching || busy) return;
+    setMultipleSearching(true);
+    setMultipleSearchQuery(searchText);
+    setMultipleCardsData([]);
+    // Give React time to paint the spinner before the CPU-intensive file matching starts.
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 40));
     try {
-      localStorage.setItem(GUEST_STATE_KEY, JSON.stringify({
-        folderName,
-        query,
-        selectedId: selected?.id || null,
-        currentPage,
-      }));
-    } catch { /* تجاهل تعذر حفظ حالة العرض */ }
-  }, [restoreComplete, folderName, query, selected, currentPage]);
-
-  const previewUrl = useMemo(() => selected
-    ? URL.createObjectURL(new Blob([selected.file], { type: getPreviewMimeType(selected.extension) }))
-    : "", [selected]);
-  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
-
-  const results = useMemo<SearchResult[]>(() => {
-    const q = normalize(query);
-    if (!q) return [];
-
-    // Resolve room/confirmation numbers through arr.pdf, then search by guest name.
-    const linkedArrivalGuests = arrivals.filter((item) =>
-      normalize(item.roomNo).replace(/\s+/g, "") === q.replace(/\s+/g, "")
-      || normalize(item.confirmationNo).replace(/\s+/g, "") === q.replace(/\s+/g, "")
-    );
-    const isArrivalNumberSearch = linkedArrivalGuests.length > 0;
-    const matchingArrivalNames = linkedArrivalGuests.map((item) => item.name);
-
-    const matchedResults = files.flatMap((item) => {
-      const matchedPages = item.pages.reduce<number[]>((acc, page, index) => {
-        const searchable = [item.name, item.path, item.company, page].join(" ");
-        const matchesLinkedGuest = matchingArrivalNames.some((name) => arrivalNameMatchesText(name, searchable));
-        const matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, query);
+      const cards = buildMultipleCards(searchText, files, arrivals);
+      setMultipleCardsData(cards);
+    } finally {
+      setMultipleSearching(false);
+    }
+  }
+matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, query);
         if (matchesDirectQuery || matchesLinkedGuest) {
           acc.push(index + 1);
         }
@@ -2397,8 +2507,10 @@ export default function GuestNameExtractorPage() {
           <h2>البحث المتعدد</h2>
           <p className="muted">هذا البحث مستقل عن Single View. اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة، ثم اضغط «بحث» لعرض النتائج.</p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
-            <button type="button" className="add-button" onClick={() => setMultipleSearchQuery(multipleDraftQuery)} disabled={!query.trim() || busy}>بحث</button>
-            <button type="button" className="add-button" onClick={() => { setMultipleDraftQuery(""); setMultipleSearchQuery(""); }} disabled={!multipleDraftQuery && !multipleSearchQuery}>مسح البحث</button>
+            <button type="button" className="add-button" onClick={() => void runMultipleSearch()} disabled={!multipleDraftQuery.trim() || busy || multipleSearching}>
+              {multipleSearching ? <><span className="search-spinner" aria-hidden="true" /> جارٍ البحث...</> : "بحث"}
+            </button>
+            <button type="button" className="add-button" onClick={() => { setMultipleDraftQuery(""); setMultipleSearchQuery(""); setMultipleCardsData([]); }} disabled={!multipleDraftQuery && !multipleSearchQuery && !multipleCardsData.length}>مسح البحث</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("room")} disabled={!arrivals.length}>نسخ كل أرقام الغرف</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("confirmation")} disabled={!arrivals.length}>نسخ كل الأرقام التأكيدية</button>
           </div>
@@ -2417,6 +2529,7 @@ export default function GuestNameExtractorPage() {
           </div>
           {multipleSearchQuery.trim() && <p className="saved-hint">عدد مربعات البحث بعد الفلترة: {multipleCards.length}</p>}
           {multipleSearchQuery.trim() && multipleCards.length === 0 && <p className="empty-exclusions">لا توجد مربعات مطابقة للشركة المحددة أو لم يتم العثور على نتائج.</p>}
+          {multipleSearching && <p className="saved-hint" role="status">جارٍ مطابقة الأسماء مع ملفات Guest Voucher وملفات الحجز...</p>}
           {multipleCards.length > 0 && <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,390px),1fr))", gap: 12, marginTop: 14 }}>
             {multipleCards.map((card) => {
               const isGreen = greenCards.includes(card.key);
@@ -2437,8 +2550,8 @@ export default function GuestNameExtractorPage() {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "8px 0" }}>
                     {isMtsIndexedFile(card.file) ? <>
                       {card.file.extension.toLowerCase() === "msg" && <button type="button" className="add-button" onClick={() => void openMtsOutlookFile(card.file!)}>فتح ملف Outlook</button>}
-                      <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...card.file!, matchedPages: [1] })}>استعراض الفاوتشر</button>
-                      <button type="button" className="add-button" onClick={() => void printMtsVoucher(card.file!)}>طباعة الفاوتشر</button>
+                      <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...(card.voucherFile || card.file)!, matchedPages: [1] })}>استعراض الفاوتشر</button>
+                      <button type="button" className="add-button" onClick={() => void printMtsVoucher((card.voucherFile || card.file)!)}>طباعة الفاوتشر</button>
                     </> : <>
                       {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(card.file!.path)}>مكان الملف</button>}
                       <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [1] })}>معاينة واستخراج</button>
