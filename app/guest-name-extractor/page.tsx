@@ -945,7 +945,8 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
     && /\bBirthdate\b/i.test(clean)) {
     const passengerStart = clean.search(/\bPassenger\s+Informations\b/i);
     const passengerSection = clean.slice(passengerStart)
-      .split(/\b(?:Agency\s+Note|Hotel\s+Notes|Agency\s+Name|Agency\s+User|Sejour\s+Hotel\s+Name)\b/i)[0];
+      .replace(/^Passenger\\s+Informations\\b/i, "")
+      .split(/\\b(?:Agency\\s+Note|Hotel\\s+Notes|Agency\\s+Name|Agency\\s+User|Sejour\\s+Hotel\\s+Name)\\b/i)[0];
     const funSunRowPattern = /(?:^|\\s)(?:(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF|ADT)\\.?\\s+)?([\\p{L}][\\p{L}\\p{M}'’.-]*(?:\\s+[\\p{L}][\\p{L}\\p{M}'’.-]*){1,3})\\s*(?:-\\s*)?(\\d{1,2}[./-]\\d{1,2}[./-]\\d{4})\\b/giu;
     const funSunPeople = Array.from(passengerSection.matchAll(funSunRowPattern), (match) => ({
       name: titleCaseName(match[1].replace(/[,]+/g, " ").replace(/\\s+/g, " ").trim()),
