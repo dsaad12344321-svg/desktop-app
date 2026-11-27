@@ -1461,15 +1461,14 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
 
     if (matchedVoucher) {
       voucherFile = matchedVoucher.file;
-      const matchedPages = matchedVoucher.pages.filter((page) => queryIsBookingNumber
-        ? getMtsVoucherReference(page) === compact
-        : arrivalNameMatchesText(targetName, page));
-      people = matchedPages.flatMap((page) =>
+      // Once the arrival guest identifies the correct voucher, parse every page
+      // in that same voucher so companions on continuation pages are included.
+      people = matchedVoucher.pages.flatMap((page) =>
         extractPeople(page, "", matchedVoucher.file.company, true, true),
       );
 
       // Resolve the MSG filename from the voucher's own booking reference.
-      const reference = matchedPages.map(getMtsVoucherReference).find(Boolean)
+      const reference = matchedVoucher.pages.map(getMtsVoucherReference).find(Boolean)
         || getMtsVoucherReference(matchedVoucher.file.name);
       const sameFolder = (candidate: IndexedFile) =>
         candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase()
@@ -1851,6 +1850,7 @@ export default function GuestNameExtractorPage() {
     const root = allFiles[0].webkitRelativePath?.split("/")[0] || "المجلد المحدد";
     const readable = allFiles.filter((file) => SUPPORTED.has(file.name.split(".").pop()?.toLowerCase() || ""));
     setBusy(true); setError(""); setWarnings([]); setFiles([]); setQuery(""); setSelected(null);
+    setMultipleDraftQuery(""); setMultipleSearchQuery(""); setMultipleCardsData([]);
     setFolderName(root); setProgress({ done: 0, total: readable.length });
     const indexed: IndexedFile[] = []; const failed: string[] = [];
     for (let index = 0; index < readable.length; index++) {
