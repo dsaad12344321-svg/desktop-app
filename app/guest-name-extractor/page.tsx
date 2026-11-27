@@ -1508,8 +1508,14 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
     }
 
     // Non-MTS supplier lookup remains unchanged, but searchable text is computed once per file.
-    if (!file && !mtsFiles.length) {
+    const hasMtsNameMatch = mtsFiles.some((candidate) =>
+      arrival
+        ? arrivalNameMatchesText(targetName, searchableText.get(candidate.id) || "")
+        : matchesSearchText(searchableText.get(candidate.id) || "", term),
+    );
+    if (!file && !hasMtsNameMatch) {
       const matchingFiles = files.filter((candidate) => {
+        if (isMtsIndexedFile(candidate)) return false;
         const text = searchableText.get(candidate.id) || "";
         return arrival
           ? arrivalNameMatchesText(arrival.name, text)
