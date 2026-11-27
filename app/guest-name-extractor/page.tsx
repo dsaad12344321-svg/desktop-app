@@ -448,9 +448,17 @@ function extractW2mPeople(text: string, searchTerm: string) {
   };
 
   // Standard W2M bullet format: "* Full Name (Age: 21)" or a DOB label.
-  const bulletPattern = /(?:^|\n|\s)(?:\*|•)?\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})|\(\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*\))/giu;
+  const bulletPattern = /(?:^|\n|\s)[*•]\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})|\(\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*\))?/giu;
   for (const match of passengerText.matchAll(bulletPattern)) {
     add(match[1], match[2] ? "(Age: " + match[2] + ")" : match[3] || match[4] || "");
+  }
+  // Some templates omit bullets; accept unbulleted rows only when they carry
+  // an explicit age or birthdate so table headings cannot become guest names.
+  const unbulletedPattern = /(?:^|\n)\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})|\(\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*\))/giu;
+  if (!people.length) {
+    for (const match of passengerText.matchAll(unbulletedPattern)) {
+      add(match[1], match[2] ? "(Age: " + match[2] + ")" : match[3] || match[4] || "");
+    }
   }
 
   // W2M can also send a passenger table with separate first/last-name columns.
