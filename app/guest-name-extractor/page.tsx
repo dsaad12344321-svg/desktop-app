@@ -1290,8 +1290,7 @@ export default function GuestNameExtractorPage() {
       const file = prioritizedSunFiles[0] || matchingFiles[0] || null;
       const people = file ? extractPeopleFromIndexedFile(file, arrival?.name || term, true) : [];
       // Preserve repeated SUN guest rows; keep existing de-duplication for other companies.
-      const uniquePeople = file && (normalize(file.company) === "sun"
-        || /sun\s+international/i.test(file.content + " " + file.pages.join(" ")))
+      const uniquePeople = file && isSunInternationalIndexedFile(file)
         ? people
         : people.filter((person, personIndex, all) =>
             all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
