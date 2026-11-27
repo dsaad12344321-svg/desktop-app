@@ -1539,7 +1539,7 @@ export default function GuestNameExtractorPage() {
       const folderPath = item.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
       const folderFiles = files.filter((candidate) => isMtsIndexedFile(candidate) && candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase() === folderPath);
       const bookingMessages = folderFiles.filter((candidate) => candidate.extension.toLowerCase() === "msg" && /^\d+\.msg$/i.test(candidate.name));
-      if (bookingMessages.length) return item.extension.toLowerCase() === "msg" && /^\\d+\\.msg$/i.test(item.name);
+      if (bookingMessages.length) return item.extension.toLowerCase() === "msg" && /^\d+\.msg$/i.test(item.name);
       return /guest\s*voucher/i.test(item.name) && ["pdf", "msg"].includes(item.extension.toLowerCase());
     });
   }, [files, query, arrivals]);
@@ -1600,8 +1600,8 @@ export default function GuestNameExtractorPage() {
       const mtsFiles = matchingFiles.filter((candidate) => isMtsIndexedFile(candidate));
       const folderPath = mtsFiles[0]?.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
       const folderFiles = folderPath ? files.filter((candidate) => isMtsIndexedFile(candidate) && candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase() === folderPath) : [];
-      const bookingMessages = folderFiles.filter((candidate) => candidate.extension.toLowerCase() === "msg" && /^\\d+\\.msg$/i.test(candidate.name));
-      const prioritizedMtsFiles = bookingMessages.length ? bookingMessages : folderFiles.filter((candidate) => /guest\\s*voucher/i.test(candidate.name) && ["pdf", "msg"].includes(candidate.extension.toLowerCase()));
+      const bookingMessages = folderFiles.filter((candidate) => candidate.extension.toLowerCase() === "msg" && /^\d+\.msg$/i.test(candidate.name));
+      const prioritizedMtsFiles = bookingMessages.length ? bookingMessages : folderFiles.filter((candidate) => /guest\s*voucher/i.test(candidate.name) && ["pdf", "msg"].includes(candidate.extension.toLowerCase()));
       const sunFiles = matchingFiles.filter((candidate) => isSunInternationalIndexedFile(candidate));
       const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
         const priority = (candidate: IndexedFile) => {
