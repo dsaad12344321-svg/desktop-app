@@ -14,7 +14,7 @@ type MsgAttachmentPreview = { name: string; type: string; blob: Blob; url: strin
 type AttachmentSearchMatch = { page: number; excerpt: string };
 type MsgPreviewData = { subject: string; sender: string; senderEmail: string; to: string; cc: string; sent: string; bodyHtml: string; bodyText: string; attachments: MsgAttachmentPreview[] };
 
-type ArrivalRecord = { roomNo: string; name: string; confirmationNo: string; arrivalTime: string };
+type ArrivalRecord = { roomNo: string; name: string; confirmationNo: string; arrivalTime: string; company?: string };
 
 const ARRIVAL_REPORT_KEY = "nationality-arrival-report-v1";
 
@@ -72,6 +72,8 @@ async function extractArrivalReport(file: File): Promise<ArrivalRecord[]> {
 
       const rowText = roomLine[2];
       const companyMarker = rowText.search(/\s+T\s*-/i);
+      const companyText = companyMarker >= 0 ? rowText.slice(companyMarker).replace(/^\s*T\s*-\s*/i, "").trim() : "";
+      const company = companyText ? canonicalizeArrivalCompany(companyText) : "";
       let guestName = companyMarker >= 0 ? rowText.slice(0, companyMarker).trim() : "";
       if (!guestName) {
         const titledName = rowText.match(/^(.+?,\s*(?:Mr|Mrs|Ms|Miss|Mstr|Master)\.?)\b/i);
@@ -104,6 +106,7 @@ async function extractArrivalReport(file: File): Promise<ArrivalRecord[]> {
           name: guestName.replace(/\s+/g, " "),
           confirmationNo,
           arrivalTime,
+          company: company || undefined,
         });
       }
     }
@@ -124,6 +127,21 @@ const GUEST_STATE_KEY = "nationality-guest-extractor-state-v1";
 const SUPPORTED = new Set(["pdf", "png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff", "docx", "msg", "txt", "csv", "xml", "html", "htm", "eml", "log"]);
 const normalize = (value: string) =>
   value.toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+function canonicalizeArrivalCompany(value: string) {
+  const cleaned = normalize(value.replace(/^T\s*-\s*/i, ""));
+  if (/biblio|biblo/.test(cleaned)) return "biblio";
+  if (/anex/.test(cleaned)) return "Anex";
+  if (/(^|\s)mts(\s|$)/.test(cleaned)) return "MTS";
+  if (/odeon/.test(cleaned)) return "Odeon";
+  if (/fun\s*sun|funsun/.test(cleaned)) return "FUN&SUN";
+  if (/sun international|sunint/.test(cleaned)) return "SUN International";
+  if (/w2m|world 2 meet|world2meet/.test(cleaned)) return "W2M";
+  if (/tez/.test(cleaned)) return "TEZ";
+  if (/travel ways/.test(cleaned)) return "Travel Ways";
+  if (/hotel direct/.test(cleaned)) return "Hotel Direct";
+  return value.replace(/^T\s*-\s*/i, "").trim();
+}
 
 function getPreviewMimeType(extension: string) {
   const mimeTypes: Record<string, string> = {
@@ -1664,11 +1682,19 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
         const text = searchableText.get(candidate.id) || "";
         return arrival ? arrivalNameMatchesText(targetName, text) : matchesSearchText(text, term);
       });
-      const funSunFiles = matchingFiles.filter(isFunSunIndexedFile);
+      // Use the supplier explicitly printed in arr.pdf before considering
+      // same-name hits from other operators (e.g. Biblio rooming-list emails).
+      const companyScopedFiles = arrival?.company
+        ? matchingFiles.filter((candidate) =>
+            canonicalizeArrivalCompany(candidate.company) === canonicalizeArrivalCompany(arrival.company || ""),
+          )
+        : [];
+      const sourceFiles = companyScopedFiles.length ? companyScopedFiles : matchingFiles;
+      const funSunFiles = sourceFiles.filter(isFunSunIndexedFile);
       const prioritizedFunSunFiles = [...funSunFiles].sort((left, right) =>
         getFunSunFilePriority(left) - getFunSunFilePriority(right),
       );
-      const sunFiles = matchingFiles.filter(isSunInternationalIndexedFile);
+      const sunFiles = sourceFiles.filter(isSunInternationalIndexedFile);
       const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
         const priority = (candidate: IndexedFile) => {
           if (candidate.extension !== "pdf") return candidate.extension === "msg" ? 4 : 5;
@@ -1682,7 +1708,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
         };
         return priority(left) - priority(right);
       });
-      file = prioritizedFunSunFiles[0] || prioritizedSunFiles[0] || matchingFiles[0] || null;
+      file = prioritizedFunSunFiles[0] || prioritizedSunFiles[0] || sourceFiles[0] || null;
       people = file ? extractPeopleForMultipleView(file, targetName, true) : [];
     }
 
@@ -1888,7 +1914,7 @@ export default function GuestNameExtractorPage() {
           arrivalNameMatchesText(arrival.name, [candidate.name, candidate.path, candidate.company, page].join(" ")),
         ),
       );
-      companyByConfirmation.set(arrival.confirmationNo, matchedFile?.company || "غير محددة");
+      companyByConfirmation.set(arrival.confirmationNo, arrival.company || matchedFile?.company || "غير محددة");
     }
     return companyByConfirmation;
   }, [arrivals, files]);
@@ -2919,7 +2945,7 @@ export default function GuestNameExtractorPage() {
                   )}>{isGreen ? "اللون الافتراضي" : "تمييز بالأخضر"}</button>
                 </div>
                 {card.arrival
-                  ? <p className="muted">رقم الغرفة: {card.arrival.roomNo} · الرقم التأكيدي: {card.arrival.confirmationNo} · موعد الوصول: {card.arrival.arrivalTime}</p>
+                  ? <p className="muted">رقم الغرفة: {card.arrival.roomNo} · الرقم التأكيدي: {card.arrival.confirmationNo} · موعد الوصول: {card.arrival.arrivalTime}{card.arrival.company ? ` · الشركة: ${card.arrival.company}` : ""}</p>
                   : <p className="muted">بحث: {card.term} · لم يتم العثور على سجل مطابق في arr.pdf</p>}
                 {card.file ? <>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "8px 0" }}>
