@@ -171,6 +171,14 @@ const arrivalNameMatchesText = (arrivalName: string, searchableText: string) => 
   return tokens.length >= 2 && tokens.every((token) => searchable.includes(` ${token} `));
 };
 
+const SUN_IGNORED_TITLE_TOKENS = new Set([
+  "mr", "mrs", "ms", "miss", "mstr", "master", "chd", "child", "inf", "adt", "adult",
+]);
+
+function getSunSearchTokens(value: string) {
+  return normalize(value).split(/\s+/).filter((token) => token && !SUN_IGNORED_TITLE_TOKENS.has(token));
+}
+
 const MONTH_FOLDER_PATTERN = /^\\d{1,2}[._ -]?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:[._ -].*)?$/i;
 
 function getFolderMetadata(path: string): { company: string; day?: string; month?: string } {
@@ -626,10 +634,13 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
       const match = groups.find((group) => group.voucher.toLowerCase() === compactQuery.toLowerCase());
       return match?.people || [];
     }
+    const searchTokens = getSunSearchTokens(normalizedQuery);
     const matchingGroups = groups.filter((group) => group.people.some((person) => {
       const name = normalize(person.name);
-      const tokens = normalizedQuery.split(/\s+/).filter(Boolean);
-      return name.includes(normalizedQuery) || (tokens.length > 0 && tokens.every((token) => name.split(/\s+/).some((part) => part.includes(token))));
+      return name.includes(normalizedQuery)
+        || (searchTokens.length > 0 && searchTokens.every((token) =>
+          name.split(/\s+/).some((part) => part.includes(token)),
+        ));
     }));
     return matchingGroups.flatMap((group) => group.people);
   }
@@ -812,12 +823,13 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
     })).filter((person) => person.name && !/^(?:surname name|name|age)$/i.test(person.name));
     if (sunPeople.length) {
       const normalizedSearch = normalize(searchTerm);
+      const searchTokens = getSunSearchTokens(normalizedSearch);
       const matchesVoucher = !normalizedSearch
         || /^\d{5,12}$/.test(normalizedSearch.replace(/\s+/g, ""))
         || sunPeople.some((person) => normalize(person.name).includes(normalizedSearch)
-          || normalizedSearch.split(/\s+/).filter(Boolean).every((token) =>
+          || (searchTokens.length > 0 && searchTokens.every((token) =>
             normalize(person.name).split(/\s+/).some((part) => part.includes(token)),
-          ));
+          )));
       return matchesVoucher ? sunPeople : [];
     }
   }
