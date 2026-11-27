@@ -261,7 +261,10 @@ async function extractText(file: File, extension: string): Promise<{ content: st
       try {
         const { decompressRTF } = await import("@kenjiuno/decompressrtf");
         const decompressed = decompressRTF(Array.from(compressedRtf));
-        compressedRtfText = rtfToPlainText(new TextDecoder("windows-1252").decode(new Uint8Array(decompressed)));
+        const decodedRtf = rtfToPlainText(new TextDecoder("windows-1252").decode(new Uint8Array(decompressed)));
+        compressedRtfText = /<(?:html|body|table|tr|td)\b/i.test(decodedRtf)
+          ? htmlToPlainText(decodedRtf)
+          : decodedRtf;
       } catch {
         // Some messages contain a corrupt RTF stream; retain their plain/HTML body.
       }
@@ -438,26 +441,21 @@ function extractW2mPeople(text: string, searchTerm: string) {
   const sectionEnd = section.search(/\bNumber\s+of\s+Adults?\s*\/\s*Childs?\s*\/\s*Bab(?:y|ies)\b|\bBooking\s+Summary\b|\bPayment\s+Details\b/i);
   const passengerText = sectionEnd > 0 ? section.slice(0, sectionEnd) : section;
   const people: { name: string; dob: string }[] = [];
-  const seen = new Set<string>();
   const add = (name: string, detail = "") => {
     const normalizedName = name.replace(/\s+/g, " ").replace(/^[*•\-\s]+|[|,;\s]+$/g, "").trim();
     if (!normalizedName || normalizedName.split(/\s+/).length < 2) return;
-    const normalizedDetail = detail.trim();
-    const key = normalize(normalizedName) + "|" + normalize(normalizedDetail);
-    if (seen.has(key)) return;
-    seen.add(key);
-    people.push({ name: titleCaseName(normalizedName), dob: normalizedDetail });
+    people.push({ name: titleCaseName(normalizedName), dob: detail.trim() });
   };
 
   // Standard W2M bullet format: "* Full Name (Age: 21)" or a DOB label.
-  const bulletPattern = /(?:^|\n|\s)\*\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))?/giu;
+  const bulletPattern = /(?:^|\n|\s)(?:\*|•)?\s*([\p{L}\p{M}][\p{L}\p{M}'’.-]*(?:\s+[\p{L}\p{M}][\p{L}\p{M}'’.-]*){1,7})\s*(?:\(\s*(?:Age\s*:\s*(\d{1,3})|(?:DOB|Birth\s*date|Date\s*of\s*birth)\s*:\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4}))\s*\)|[-|]\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})|\(\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s*\))/giu;
   for (const match of passengerText.matchAll(bulletPattern)) {
     add(match[1], match[2] ? "(Age: " + match[2] + ")" : match[3] || match[4] || "");
   }
 
   // W2M can also send a passenger table with separate first/last-name columns.
   const lines = passengerText.split(/\n+/).map((line) => line.trim()).filter(Boolean);
-  const headerIndex = lines.findIndex((line) =>
+  const headerIndex = people.length ? -1 : lines.findIndex((line) =>
     /Passenger\s+Name/i.test(line) && /Passenger\s+Last\s+Name/i.test(line),
   );
   if (headerIndex >= 0) {
