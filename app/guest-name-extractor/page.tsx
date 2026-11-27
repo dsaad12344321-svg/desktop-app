@@ -1046,7 +1046,8 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
 
 type SunIndexedFile = Pick<IndexedFile, "extension" | "pages" | "visualPages" | "content" | "company" | "name" | "path">;
 
-function isSunInternationalIndexedFile(file: SunIndexedFile) {
+function isSunInternationalIndexedFile(file: SunIndexedFile | null | undefined) {
+  if (!file) return false;
   const company = normalize(file.company);
   const searchable = [file.name, file.path, file.content, ...file.pages, ...(file.visualPages || [])].join(" ");
   const hasPassengerTable = /surname\s*,?\s*name/i.test(searchable)
