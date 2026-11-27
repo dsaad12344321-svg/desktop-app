@@ -2228,11 +2228,31 @@ export default function GuestNameExtractorPage() {
   }
 
   async function printMtsVoucher(item: IndexedFile) {
-    let voucherBlob: Blob | null = null;
-    if (item.extension.toLowerCase() === "pdf") {
-      voucherBlob = item.file;
-    } else if (item.extension.toLowerCase() === "msg") {
-      try {
+    const pageInput = window.prompt(
+      "أدخل رقم صفحة الحجز المطلوب طباعتها من Guest Voucher (حسب ترتيب صفحات PDF):",
+      "1",
+    );
+    if (pageInput === null) return;
+    const pageNumber = Number(pageInput.trim());
+    if (!Number.isInteger(pageNumber) || pageNumber < 1) {
+      window.alert("يرجى إدخال رقم صفحة صحيح يبدأ من 1.");
+      return;
+    }
+
+    // Open synchronously from the click to avoid popup blocking during PDF preparation.
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      window.alert("يرجى السماح بالنوافذ المنبثقة حتى تتمكن من طباعة الفاوتشر.");
+      return;
+    }
+    printWindow.document.write("<!doctype html><html><body style='font-family:Arial;padding:24px'>جارٍ تجهيز الصفحة المطلوبة للطباعة...</body></html>");
+    printWindow.document.close();
+
+    try {
+      let voucherBlob: Blob | null = null;
+      if (item.extension.toLowerCase() === "pdf") {
+        voucherBlob = item.file;
+      } else if (item.extension.toLowerCase() === "msg") {
         const { MsgReader } = await import("@kenjiuno/msgreader-web-ng");
         const reader = new MsgReader(await item.file.arrayBuffer());
         const data = reader.getFileData();
@@ -2249,34 +2269,58 @@ export default function GuestNameExtractorPage() {
           voucherBlob = new Blob([new Uint8Array(extracted.content).buffer as ArrayBuffer], { type: "application/pdf" });
           break;
         }
-      } catch {
-        voucherBlob = null;
       }
-    }
-    if (!voucherBlob) {
-      window.alert("لم يتم العثور على ملف PDF Voucher داخل حجز MTS.");
-      return;
-    }
-    const url = URL.createObjectURL(voucherBlob);
-    const printWindow = window.open(url, "_blank");
-    if (!printWindow) {
-      URL.revokeObjectURL(url);
-      window.alert("يرجى السماح بالنوافذ المنبثقة حتى تتمكن من طباعة الفاوتشر.");
-      return;
-    }
-    const timer = window.setInterval(() => {
-      try {
-        if (printWindow.document.readyState === "complete") {
-          window.clearInterval(timer);
-          printWindow.focus();
-          printWindow.print();
-        }
-      } catch {
-        window.clearInterval(timer);
+      if (!voucherBlob) throw new Error("لم يتم العثور على ملف PDF Voucher داخل حجز MTS.");
+
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+      const pdf = await pdfjs.getDocument({ data: new Uint8Array(await voucherBlob.arrayBuffer()) }).promise;
+      if (pageNumber > pdf.numPages) {
+        throw new Error("رقم الصفحة أكبر من عدد صفحات الفاوتشر (" + pdf.numPages + ").");
       }
-    }, 700);
-    window.setTimeout(() => window.clearInterval(timer), 15_000);
-    window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+
+      const page = await pdf.getPage(pageNumber);
+      const viewport = page.getViewport({ scale: 1.8 });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("تعذر تجهيز صفحة الفاوتشر للطباعة.");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      await page.render({ canvasContext: context, viewport, canvas } as Parameters<typeof page.render>[0]).promise;
+      const pageImage = canvas.toDataURL("image/png");
+
+      printWindow.document.open();
+      printWindow.document.write(\`<!doctype html>
+        <html lang="ar">
+          <head>
+            <meta charset="utf-8">
+            <title>MTS Guest Voucher - Page \${pageNumber}</title>
+            <style>
+              @page { size: A4; margin: 0; }
+              html, body { margin: 0; padding: 0; background: #fff; }
+              img { display: block; width: 210mm; height: 297mm; object-fit: contain; margin: 0 auto; }
+              @media screen { body { display:flex; justify-content:center; } img { max-width:100vw; height:auto; } }
+            </style>
+          </head>
+          <body>
+            <img src="\${pageImage}" alt="MTS Guest Voucher page \${pageNumber}">
+            <script>
+              const image = document.querySelector("img");
+              image.addEventListener("load", () => {
+                window.focus();
+                window.print();
+              }, { once: true });
+              image.addEventListener("error", () => {
+                document.body.textContent = "تعذر تجهيز الصفحة للطباعة.";
+              }, { once: true });
+            </script>
+          </body>
+        </html>\`);
+      printWindow.document.close();
+    } catch (error) {
+      printWindow.close();
+      window.alert(error instanceof Error ? error.message : "حدث خطأ أثناء تجهيز صفحة الفاوتشر للطباعة.");
+    }
   }
 
   async function removeSavedFolder() {
