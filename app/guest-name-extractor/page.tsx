@@ -522,16 +522,11 @@ function extractW2mPeople(text: string, searchTerm: string) {
     }
   }
 
-  if (!people.length) return [];
-  const query = normalize(searchTerm);
-  const queryCompact = query.replace(/\s+/g, "");
-  const bookingMatches = Boolean(query && normalize(clean).replace(/\s+/g, "").includes(queryCompact));
-  const nameMatches = !query || people.some((person) => {
-    const parts = normalize(person.name).split(/\s+/);
-    const tokens = query.split(/\s+/).filter(Boolean);
-    return tokens.length > 0 && tokens.every((token) => parts.some((part) => part.includes(token)));
-  });
-  return !query || bookingMatches || nameMatches ? people : [];
+  // A W2M email represents one booking and its Passengers block is the
+  // authoritative guest list. The search may be a hotel arrival-list name
+  // in "SURNAME, GIVEN, TITLE" order, which does not match W2M's full-name
+  // order; once the MSG itself is selected, return all passengers in it.
+  return people;
 }
 function titleCaseAnexName(value: string) {
   // Anex prints guest names as SURNAME GIVEN-NAME; show them as Given-name Surname.
@@ -1382,10 +1377,6 @@ export default function GuestNameExtractorPage() {
   const [multipleSearchQuery, setMultipleSearchQuery] = useState("");
   const [viewMode, setViewMode] = useState<"single" | "multiple">("single");
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => setMultipleSearchQuery(query), 600);
-    return () => window.clearTimeout(timer);
-  }, [query]);
   const [arrivalFrom, setArrivalFrom] = useState("");
   const [arrivalTo, setArrivalTo] = useState("");
   const [arrivalCompanyFilter, setArrivalCompanyFilter] = useState("all");
@@ -2387,8 +2378,10 @@ export default function GuestNameExtractorPage() {
         </section>
         {viewMode === "multiple" && <section className="panel">
           <h2>البحث المتعدد</h2>
-          <p className="muted">اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة. يبدأ البحث بعد التوقف عن الكتابة لمدة 0.6 ثانية.</p>
+          <p className="muted">اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة، ثم اضغط على زر «بحث» لعرض النتائج.</p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
+            <button type="button" className="primary-button" onClick={() => setMultipleSearchQuery(query)} disabled={!query.trim() || busy}>بحث</button>
+            <button type="button" className="add-button" onClick={() => { setQuery(""); setMultipleSearchQuery(""); }} disabled={!query && !multipleSearchQuery}>مسح البحث</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("room")} disabled={!arrivals.length}>نسخ كل أرقام الغرف</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("confirmation")} disabled={!arrivals.length}>نسخ كل الأرقام التأكيدية</button>
           </div>
