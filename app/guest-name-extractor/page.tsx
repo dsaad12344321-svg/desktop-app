@@ -1154,6 +1154,12 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
 
 type SunIndexedFile = Pick<IndexedFile, "extension" | "pages" | "visualPages" | "content" | "company" | "name" | "path">;
 
+function isW2mIndexedFile(file: Pick<IndexedFile, "company" | "content" | "pages"> | null | undefined) {
+  if (!file) return false;
+  return /^w2m$/i.test(file.company.trim())
+    || /noreply@w2m\.com|world\s*2\s*meet|world2meet/i.test([file.content, ...file.pages].join(" "));
+}
+
 function isSunInternationalIndexedFile(file: SunIndexedFile | null | undefined) {
   if (!file) return false;
   const company = normalize(file.company);
@@ -1465,7 +1471,7 @@ export default function GuestNameExtractorPage() {
       const file = prioritizedSunFiles[0] || matchingFiles[0] || null;
       const people = file ? extractPeopleForMultipleView(file, arrival?.name || term, true) : [];
       // Preserve repeated SUN guest rows; keep existing de-duplication for other companies.
-      const uniquePeople = file && isSunInternationalIndexedFile(file)
+      const uniquePeople = file && (isSunInternationalIndexedFile(file) || isW2mIndexedFile(file))
         ? people
         : people.filter((person, personIndex, all) =>
             all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
@@ -2190,19 +2196,21 @@ export default function GuestNameExtractorPage() {
                 // Preview extracted guests for every company using the same
                 // company-specific parser used by the document preview.
                 const guests = extractPeopleFromIndexedFile(item, effectivePeopleQuery);
-                const uniqueGuests = guests.filter((person, index, all) =>
-                  all.findIndex((candidate) =>
-                    normalize(candidate.name) === normalize(person.name)
-                    && normalize(candidate.dob) === normalize(person.dob),
-                  ) === index,
-                );
+                const uniqueGuests = isW2mIndexedFile(item) || isSunInternationalIndexedFile(item)
+                  ? guests
+                  : guests.filter((person, index, all) =>
+                      all.findIndex((candidate) =>
+                        normalize(candidate.name) === normalize(person.name)
+                        && normalize(candidate.dob) === normalize(person.dob),
+                      ) === index,
+                    );
                 if (!uniqueGuests.length) return null;
                 return (
                   <div style={{ marginTop: 10, padding: 10, borderRadius: 8, background: "#f5f8fc", border: "1px solid #dbe4ef" }}>
                     <strong style={{ display: "block", marginBottom: 7 }}>الأسماء المستخرجة تلقائياً: {uniqueGuests.length}</strong>
                     <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "5px 12px" }} dir="ltr">
                       {uniqueGuests.map((person, index) => (
-                        <span key={index} style={{ fontSize: 13, textAlign: "left" }}>{person.name}{person.dob ? " - " + person.dob : ""}</span>
+                        <span key={index} style={{ fontSize: 13, textAlign: "left" }}>{person.name}{/^\(Age:\s*\d+\)$/i.test(person.dob) ? " " + person.dob : person.dob ? " - " + person.dob : ""}</span>
                       ))}
                     </div>
                   </div>
