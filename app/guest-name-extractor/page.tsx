@@ -2312,7 +2312,7 @@ export default function GuestNameExtractorPage() {
       const pageImage = canvas.toDataURL("image/png");
 
       printWindow.document.open();
-      printWindow.document.write(\`<!doctype html>
+      printWindow.document.write(`<!doctype html>
         <html lang="ar">
           <head>
             <meta charset="utf-8">
@@ -2337,7 +2337,7 @@ export default function GuestNameExtractorPage() {
               }, { once: true });
             </script>
           </body>
-        </html>\`);
+        </html>`);
       printWindow.document.close();
     } catch (error) {
       printWindow.close();
