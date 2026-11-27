@@ -626,7 +626,9 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
       const guestCell = guestMatch[2].replace(/\s+(?:ARR\+?|NEW|CHANGED)\b.*$/i, "")
         .replace(/\s+(?:SINGLE|DOUBLE|TRIPLE|QUAD)\s+ROOM\b.*$/i, "").trim();
       const dobMatch = guestCell.match(/\b(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b/);
-      const nameBeforeDob = dobMatch ? guestCell.slice(0, dobMatch.index) : guestCell;
+      const nameBeforeDob = dobMatch
+        ? guestCell.slice(0, dobMatch.index)
+        : guestCell.replace(/\s+-\s*$/, "");
       // Age may share the same guest cell with the name and DOB (e.g.
       // "VIVIANA SEYBOLD 36 13.02.1989"); do not append it to the name.
       const rawName = nameBeforeDob.replace(/\s+\d{1,3}\s*\/?\s*$/, "")
