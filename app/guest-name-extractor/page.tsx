@@ -311,7 +311,30 @@ async function extractText(file: File, extension: string): Promise<{ content: st
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
       const page = await pdf.getPage(pageNumber);
       const text = await page.getTextContent();
-      pages.push(text.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+      // Preserve visual table rows in standalone PDFs. This is especially
+      // important for SUN HOTEL C/IN LIST files, whose voucher number and
+      // passenger rows are separated into columns in the original PDF.
+      const positionedItems = text.items
+        .filter((item): item is typeof item & { str: string; transform: number[] } =>
+          "str" in item && "transform" in item && Boolean(item.str?.trim()))
+        .map((item) => ({
+          text: item.str.trim(),
+          x: item.transform[4],
+          y: item.transform[5],
+        }));
+      const visualRows: { y: number; cells: { x: number; text: string }[] }[] = [];
+      for (const item of positionedItems) {
+        let row = visualRows.find((candidate) => Math.abs(candidate.y - item.y) <= 2);
+        if (!row) {
+          row = { y: item.y, cells: [] };
+          visualRows.push(row);
+        }
+        row.cells.push({ x: item.x, text: item.text });
+      }
+      pages.push(visualRows
+        .sort((a, b) => b.y - a.y)
+        .map((row) => row.cells.sort((a, b) => a.x - b.x).map((cell) => cell.text).join(" "))
+        .join("\n"));
     }
     return { content: pages.join("\n"), pages };
   }
@@ -752,29 +775,33 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
     }
   }
 
-  // SUN International / Hotel2Sejour voucher:
-  // Passenger rows follow the "Passenger Informations" table header.
+  // SUN International / Sunbug / Hotel2Sejour passenger table.
+  // The table headings are sufficient to identify this format even when the
+  // supplier/company heading or the "Passenger Informations" label is absent
+  // from PDF text extraction.
   const sunSectionIndex = clean.search(/passenger\s+informations/i);
-  // Some PDF text extractors omit the voucher/company heading or place it on
-  // another page. Identify the passenger table by its own column headings.
   const hasSunPassengerColumns = /surname\s*,?\s*name/i.test(clean)
-    && /birthdate/i.test(clean)
-    && /\btitle\b/i.test(clean);
-  const isSunPassengerTable = sunSectionIndex >= 0 && hasSunPassengerColumns;
-  if (isSunPassengerTable) {
-    const passengerSection = clean.slice(sunSectionIndex)
-      .split(/\b(?:Agency\s+Note|Hotel\s+Notes|Agency\s+Name|Agency)\b/i)[0];
-    const sunRowPattern = /\b(?:MRS|MR|MS|MISS|MSTR|CHD|INF|ADT|ADULT|CHILD)\s+([A-Z][A-Z\s,.'’\-]{1,65}?)\s+(-|\d{1,3})\s+(-|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})(?=\s|$)/gi;
+    && /\bbirthdate\b/i.test(clean)
+    && /\btitle\b/i.test(clean)
+    && /\bage\b/i.test(clean);
+  if (hasSunPassengerColumns) {
+    const passengerSection = (sunSectionIndex >= 0 ? clean.slice(sunSectionIndex) : clean)
+      .split(/\b(?:Agency\s+Note|Hotel\s+Notes|Agency\s+Name|Agency\s+User|Sejour\s+Hotel\s+Name)\b/i)[0];
+    // Row order: Title, Surname/Name, Age, Birthdate. A dash is a real empty
+    // field, not a reason to drop the passenger or infer a date.
+    const sunRowPattern = /\b(?:MRS|MR|MS|MISS|MSTR|MASTER|CHD|CHILD|INF|ADT|ADULT)\.?\s+([\p{L}][\p{L}\p{M}\s,.'’\-]{1,65}?)\s+(-|\d{1,3})\s+(-|\d{1,2}[./-]\d{1,2}[./-]\d{2,4})(?=\s|$)/giu;
     const sunPeople = Array.from(passengerSection.matchAll(sunRowPattern), (match) => ({
-      name: titleCaseName(match[1].trim()),
-      dob: match[3] === "-" ? "لم يُعثر عليه" : match[3].replace(/[.-]/g, "/"),
-    }));
+      name: titleCaseName(match[1].replace(/\s+/g, " ").replace(/^[,\s]+|[,\s]+$/g, "").trim()),
+      // Empty DOB stays empty; the SUN card renderer displays the required
+      // trailing hyphen without inventing a date.
+      dob: match[3] === "-" ? "" : match[3].replace(/[.-]/g, "/"),
+    })).filter((person) => person.name && !/^(?:surname name|name|age)$/i.test(person.name));
     if (sunPeople.length) {
       const normalizedSearch = normalize(searchTerm);
       const matchesVoucher = !normalizedSearch
-        || /^\d{7,8}$/.test(normalizedSearch.replace(/\s+/g, ""))
+        || /^\d{5,12}$/.test(normalizedSearch.replace(/\s+/g, ""))
         || sunPeople.some((person) => normalize(person.name).includes(normalizedSearch)
-          || normalizedSearch.split(/\s+/).every((token) =>
+          || normalizedSearch.split(/\s+/).filter(Boolean).every((token) =>
             normalize(person.name).split(/\s+/).some((part) => part.includes(token)),
           ));
       return matchesVoucher ? sunPeople : [];
@@ -988,16 +1015,72 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
 }
 
 
+type SunIndexedFile = Pick<IndexedFile, "extension" | "pages" | "content" | "company" | "name" | "path">;
+
+function isSunInternationalIndexedFile(file: SunIndexedFile) {
+  const company = normalize(file.company);
+  const searchable = [file.name, file.path, file.content, ...file.pages].join(" ");
+  const hasPassengerTable = /surname\s*,?\s*name/i.test(searchable)
+    && /\bbirthdate\b/i.test(searchable)
+    && /\btitle\b/i.test(searchable)
+    && /\bage\b/i.test(searchable);
+  const hasCheckInList = /\bHOTEL\s+C\/IN\s+LIST\b/i.test(searchable)
+    && /\bVoucher\b/i.test(searchable)
+    && /\bSurname,\s*Name\b/i.test(searchable)
+    && /\bAge\/B\.Date\b/i.test(searchable);
+  return ["sun", "sun international", "sunbug", "sun bug"].includes(company)
+    || /\bSUN\s+INTERNATIONAL\b|\bSUNBUG\b/i.test(searchable)
+    || hasPassengerTable
+    || hasCheckInList;
+}
+
 /**
- * Universal Outlook fallback:
- * 1) Parse the email body first.
- * 2) If it contains no guest records, parse all indexed attachment pages.
- * 3) If a company parser needs page-local context, try each attachment page.
- * This deliberately reuses the existing company parsers without changing
- * their rules or affecting standalone documents.
+ * Parse SUN batch PDFs page-by-page so a name or reservation search returns
+ * only the matching reservation page(s), not passengers from every booking
+ * in Hotel2Sejour / Final / Reservations files. For MSG files, inspect PDF
+ * attachment pages before falling back to the email body.
  */
-function extractPeopleFromIndexedFile(file: Pick<IndexedFile, "extension" | "pages" | "content" | "company">, searchTerm: string, enableSunCheckInList = false) {
+function extractPeopleFromIndexedFile(
+  file: Pick<IndexedFile, "extension" | "pages" | "content" | "company" | "name" | "path">,
+  searchTerm: string,
+  enableSunCheckInList = false,
+) {
   const isMsg = file.extension.toLowerCase() === "msg";
+  const isSun = isSunInternationalIndexedFile(file);
+
+  if (isSun) {
+    const sourcePages = isMsg
+      ? file.pages.slice(1).filter((page) => page.trim())
+      : file.pages.filter((page) => page.trim());
+    const filename = (file.name || file.path || "").split(/[\\/]/).pop() || "";
+    const compactQuery = normalize(searchTerm).replace(/\s+/g, "");
+    const numericFilename = /^\d+\.pdf$/i.test(filename);
+    const queryIsNumeric = /^\d{5,12}$/.test(compactQuery);
+    const filenameIsExactBooking = numericFilename
+      && filename.replace(/\.pdf$/i, "") === compactQuery;
+    const matchingPages = sourcePages.filter((page) => {
+      if (!searchTerm.trim()) return true;
+      if (filenameIsExactBooking) return true;
+      return matchesSearchText(page, searchTerm) || arrivalNameMatchesText(searchTerm, page);
+    });
+    const pagePeople = matchingPages.flatMap((page) =>
+      extractPeople(page, searchTerm, file.company, true),
+    );
+    if (pagePeople.length) return pagePeople;
+
+    // A numeric single-voucher PDF is itself the booking identity, even when
+    // the reservation number is printed only in the filename.
+    if (filenameIsExactBooking && queryIsNumeric) {
+      return sourcePages.flatMap((page) => extractPeople(page, searchTerm, file.company, true));
+    }
+
+    if (isMsg) {
+      const emailBody = file.pages[0] || file.content || "";
+      return extractPeople(emailBody, searchTerm, file.company, true);
+    }
+    return [];
+  }
+
   if (!isMsg) {
     const source = /alltour/i.test(file.company)
       ? file.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
@@ -1190,24 +1273,21 @@ export default function GuestNameExtractorPage() {
             arrivalNameMatchesText(arrival.name, [candidate.name, candidate.path, candidate.company, page].join(" "))))
         : files.filter((candidate) => candidate.pages.some((page) =>
             matchesSearchText([candidate.name, candidate.path, candidate.company, page].join(" "), term)));
-      const isSunFile = (candidate: IndexedFile) =>
-        normalize(candidate.company) === "sun" || /sun\s+international/i.test(candidate.content + " " + candidate.pages.join(" "));
-      const sunFiles = matchingFiles.filter(isSunFile);
+      const sunFiles = matchingFiles.filter((candidate) => isSunInternationalIndexedFile(candidate));
       const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
         const priority = (candidate: IndexedFile) => {
-          if (candidate.extension !== "pdf") return candidate.extension === "msg" ? 3 : 4;
-          const filename = candidate.name.toLowerCase();
-          if (/^hotel2sejour\.pdf$/i.test(filename) || /^final\.pdf$/i.test(filename)
-            || /^reservations(?:\s*\(\d+\))?\.pdf$/i.test(filename)) return 0;
-          if (/^\d+\.pdf$/i.test(filename)) return 1;
-          return 2;
+          if (candidate.extension !== "pdf") return candidate.extension === "msg" ? 4 : 5;
+          const filename = candidate.name.split(/[\\/]/).pop() || candidate.name;
+          if (/^hotel2sejour\.pdf$/i.test(filename)) return 0;
+          if (/^final\.pdf$/i.test(filename)) return 1;
+          if (/^reservations\s*\(\s*\d+\s*\)\.pdf$/i.test(filename)) return 2;
+          if (/^\d+\.pdf$/i.test(filename)) return 3;
+          if (/\bHOTEL\s+C\/IN\s+LIST\b/i.test(candidate.content + " " + candidate.pages.join(" "))) return 4;
+          return 5;
         };
         return priority(left) - priority(right);
       });
       const file = prioritizedSunFiles[0] || matchingFiles[0] || null;
-      const source = file ? (/alltour/i.test(file.company)
-        ? file.pages.join("\\n\\n--- ALLTOUR PAGE BREAK ---\\n\\n")
-        : file.pages.join("\\n\\n")) : "";
       const people = file ? extractPeopleFromIndexedFile(file, arrival?.name || term, true) : [];
       // Preserve repeated SUN guest rows; keep existing de-duplication for other companies.
       const uniquePeople = file && (normalize(file.company) === "sun"
@@ -1887,7 +1967,7 @@ export default function GuestNameExtractorPage() {
                     <strong style={{ display: "block", marginBottom: 7 }}>الأسماء المستخرجة تلقائياً: {card.people.length}</strong>
                     {card.people.length
                       ? <div dir="ltr" style={{ display: "grid", gap: 5, textAlign: "left" }}>
-                          {card.people.map((person, personIndex) => <span key={person.name + personIndex} style={{ fontSize: 13 }}>{person.name}{person.dob ? " - " + person.dob : ""}</span>)}
+                          {card.people.map((person, personIndex) => <span key={person.name + personIndex} style={{ fontSize: 13 }}>{person.name}{person.dob ? " - " + person.dob : isSunInternationalIndexedFile(card.file) ? " -" : ""}</span>)}
                         </div>
                       : <span className="muted">لم يتم استخراج أسماء من الملف تلقائياً.</span>}
                   </div>
@@ -1962,7 +2042,7 @@ export default function GuestNameExtractorPage() {
           <h3>الأسماء وتواريخ الميلاد في الصفحة الحالية</h3>
           {extractedPeople.length ? <div className="folder-results">{extractedPeople.map((person, index) => (
             <div className="folder-result" key={index} dir="ltr" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, textAlign: "left", fontWeight: 700 }}>
-              <span>{selected.company.toLocaleLowerCase() === "easy jet" || !person.dob || person.dob === "لم يُعثر عليه" ? person.name : selected.company.toLocaleLowerCase() === "pegas" ? (person.name + " " + person.dob) : (person.name + " - " + person.dob)}</span>
+              <span>{selected.company.toLocaleLowerCase() === "easy jet" ? person.name : selected.company.toLocaleLowerCase() === "pegas" ? (person.name + " " + person.dob) : !person.dob || person.dob === "لم يُعثر عليه" ? (isSunInternationalIndexedFile(selected) ? person.name + " -" : person.name) : (person.name + " - " + person.dob)}</span>
               <button type="button" onClick={() => void copyGuestDetails(person)} title={`نسخ بيانات ${person.name}`} aria-label={`نسخ بيانات ${person.name}`} style={{ flex: "0 0 34px", width: 34, height: 34, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #e45b65", borderRadius: 7, background: "#fff", color: "#d93645", cursor: "pointer" }}>
                 <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></svg>
               </button>
