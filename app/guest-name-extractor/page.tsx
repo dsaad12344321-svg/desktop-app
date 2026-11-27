@@ -2529,12 +2529,15 @@ export default function GuestNameExtractorPage() {
           <h2>البحث المتعدد</h2>
           <p className="muted">هذا البحث مستقل عن Single View. اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة، ثم اضغط «بحث» لعرض النتائج.</p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
-            <button type="button" className="add-button" onClick={() => setMultipleSearchQuery(multipleDraftQuery)} disabled={!query.trim() || busy}>بحث</button>
-            <button type="button" className="add-button" onClick={() => { setMultipleDraftQuery(""); setMultipleSearchQuery(""); }} disabled={!multipleDraftQuery && !multipleSearchQuery}>مسح البحث</button>
+            <button type="button" className="add-button" onClick={() => void runMultipleSearch()} disabled={!multipleDraftQuery.trim() || busy || multipleSearching}>
+              {multipleSearching ? <><span className="search-spinner" aria-hidden="true" /> جارٍ البحث...</> : "بحث"}
+            </button>
+            <button type="button" className="add-button" onClick={() => { setMultipleDraftQuery(""); setMultipleSearchQuery(""); setMultipleCardsData([]); }} disabled={!multipleDraftQuery && !multipleSearchQuery && !multipleCardsData.length}>مسح البحث</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("room")} disabled={!arrivals.length}>نسخ كل أرقام الغرف</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("confirmation")} disabled={!arrivals.length}>نسخ كل الأرقام التأكيدية</button>
           </div>
           {multipleCopyStatus && <p className="saved-hint" role="status">{multipleCopyStatus}</p>}
+          {multipleSearching && <p className="saved-hint" role="status">جارٍ مطابقة الأسماء مع ملفات Guest Voucher وملفات الحجز...</p>}
           <textarea value={multipleDraftQuery} onChange={(event) => setMultipleDraftQuery(event.target.value)}
              placeholder="مثال: 0115, 209682, Fazliji, 0166" aria-label="البحث في عدة غرف وحجوزات"
             rows={3} style={{ width: "100%", border: "1px solid #cbd6e2", borderRadius: 10, padding: 12, font: "inherit", resize: "vertical" }} />
