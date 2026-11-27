@@ -1554,18 +1554,18 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
         voucherFile = matchedVoucher.file;
         people = extractPeople(matchedVoucher.matchedPage, "", matchedVoucher.file.company, true, true);
 
-        // If the matched voucher page carries a numeric voucher reference,
-        // prefer its corresponding numeric MSG only after the name-first
-        // search has failed.
-        const reference = getMtsVoucherReference(matchedVoucher.matchedPage);
-        const numericReference = /^\d{5,12}$/.test(reference) ? reference : "";
+        // Resolve the exact booking MSG from the voucher reference, whether
+        // numeric (616310.msg) or alphanumeric (SG-179412.msg).
+        const reference = getMtsVoucherReference(matchedVoucher.matchedPage).toLowerCase();
         const sameFolder = (candidate: IndexedFile) =>
           candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase()
           === matchedVoucher.file.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
-        const referenceMessage = numericReference
+        const referenceMessage = reference
           ? mtsMessages.find((candidate) =>
-              candidate.name.replace(/\.msg$/i, "") === numericReference && sameFolder(candidate),
-            ) || mtsMessages.find((candidate) => candidate.name.replace(/\.msg$/i, "") === numericReference)
+              candidate.name.replace(/\.msg$/i, "").toLowerCase() === reference && sameFolder(candidate),
+            ) || mtsMessages.find((candidate) =>
+              candidate.name.replace(/\.msg$/i, "").toLowerCase() === reference,
+            )
           : undefined;
         file = referenceMessage || matchedVoucher.file;
       }
