@@ -132,6 +132,17 @@ const configuredVoucherRules = voucherRules as { version: number; rules: Voucher
 
 function detectVoucherCompany(text: string, currentCompany = "") {
   if (currentCompany.trim() && currentCompany.trim() !== "غير محددة") return currentCompany.trim();
+  // SUN can be identified from its own branding or its distinctive passenger
+  // table, even when the PDF omits the company heading.
+  if (/\bSUN\s+INTERNATIONAL\b|\bSUNBUG\b/i.test(text)
+    || (/\bHOTEL\s+C\/IN\s+LIST\b/i.test(text)
+      && /\bVoucher\b/i.test(text)
+      && /\bSurname,\s*Name\b/i.test(text)
+      && /\bAge\/B\.Date\b/i.test(text))
+    || (/surname\s*,?\s*name/i.test(text)
+      && /\bbirthdate\b/i.test(text)
+      && /\btitle\b/i.test(text)
+      && /\bage\b/i.test(text))) return "SUN International";
   for (const rule of configuredVoucherRules.rules) {
     if (rule.signatures.length && rule.signatures.every((pattern) => {
       try { return new RegExp(pattern, "i").test(text); } catch { return false; }
