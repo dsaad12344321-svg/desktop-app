@@ -185,6 +185,7 @@
       ],
       "parser": "sun",
       "signatures": [
+        "passenger\\s+informations",
         "surname\\s*,?\\s*name",
         "\\bbirthdate\\b",
         "\\btitle\\b",
