@@ -1406,10 +1406,7 @@ function getMtsVoucherReference(text: string) {
 
 function getMtsIndexedText(file: IndexedFile) {
   return [
-    file.name,
-    file.path,
-    file.content,
-    ...file.pages,
+    file.name, file.path, file.content, ...file.pages,
     ...(file.attachmentPages || []).flatMap((attachment) => [attachment.name, ...attachment.pages]),
   ].join("\n");
 }
@@ -1449,15 +1446,13 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
       || normalize(item.confirmationNo).replace(/\s+/g, "") === compact
       || (/[a-z\p{L}]/iu.test(term) && normalize(item.name).includes(normalize(term)))
     ) || null;
-
     const targetName = arrival?.name || term;
     const queryIsBookingNumber = /^\d{5,12}$/.test(compact);
     let file: IndexedFile | null = null;
     let voucherFile: IndexedFile | null = null;
     let people: MultipleGuest[] = [];
 
-    // MTS: identify the correct Guest Voucher by the arrival guest's name first.
-    // Only after a voucher match do we resolve its booking number to a numeric MSG.
+    // MTS: first match the arrival guest against a named Guest Voucher.
     const matchedVoucher = voucherCandidates.find((candidate) =>
       candidate.pages.some((page) => queryIsBookingNumber
         ? getMtsVoucherReference(page) === compact
@@ -1466,30 +1461,32 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
 
     if (matchedVoucher) {
       voucherFile = matchedVoucher.file;
-      const matchedVoucherPages = matchedVoucher.pages.filter((page) => queryIsBookingNumber
+      const matchedPages = matchedVoucher.pages.filter((page) => queryIsBookingNumber
         ? getMtsVoucherReference(page) === compact
         : arrivalNameMatchesText(targetName, page));
-      people = matchedVoucherPages.flatMap((page) =>
+      people = matchedPages.flatMap((page) =>
         extractPeople(page, "", matchedVoucher.file.company, true, true),
       );
 
-      const reference = matchedVoucherPages.map(getMtsVoucherReference).find(Boolean)
+      // Resolve the MSG filename from the voucher's own booking reference.
+      const reference = matchedPages.map(getMtsVoucherReference).find(Boolean)
         || getMtsVoucherReference(matchedVoucher.file.name);
-      const sameVoucherFolder = (candidate: IndexedFile) =>
+      const sameFolder = (candidate: IndexedFile) =>
         candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase()
         === matchedVoucher.file.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
-      const exactReferenceMessage = reference
+      const referenceMessage = reference
         ? mtsMessages.find((candidate) =>
-            candidate.name.replace(/\.msg$/i, "") === reference && sameVoucherFolder(candidate),
+            candidate.name.replace(/\.msg$/i, "") === reference && sameFolder(candidate),
           ) || mtsMessages.find((candidate) => candidate.name.replace(/\.msg$/i, "") === reference)
         : undefined;
+      // If the voucher has no readable booking number, identify its MSG by the
+      // exact arrival guest name inside the email body or its indexed attachments.
       const nameMatchedMessage = mtsMessages.find((candidate) =>
         arrivalNameMatchesText(targetName, searchableText.get(candidate.id) || ""),
       );
-      file = exactReferenceMessage || nameMatchedMessage || matchedVoucher.file;
+      file = referenceMessage || nameMatchedMessage || matchedVoucher.file;
     } else {
-      // Alternative MTS route: if a separate Guest Voucher cannot be found,
-      // search every numeric booking MSG for the actual arrival guest's name.
+      // Alternative: search every numeric MTS MSG for the arrival guest name.
       const nameMatchedMessage = mtsMessages.find((candidate) =>
         queryIsBookingNumber
           ? candidate.name.replace(/\.msg$/i, "") === compact
@@ -1507,7 +1504,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
       }
     }
 
-    // Non-MTS supplier lookup remains unchanged, but searchable text is computed once per file.
+    // Preserve the existing SUN and other supplier search routes.
     const hasMtsNameMatch = mtsFiles.some((candidate) =>
       arrival
         ? arrivalNameMatchesText(targetName, searchableText.get(candidate.id) || "")
@@ -1517,9 +1514,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
       const matchingFiles = files.filter((candidate) => {
         if (isMtsIndexedFile(candidate)) return false;
         const text = searchableText.get(candidate.id) || "";
-        return arrival
-          ? arrivalNameMatchesText(arrival.name, text)
-          : matchesSearchText(text, term);
+        return arrival ? arrivalNameMatchesText(targetName, text) : matchesSearchText(text, term);
       });
       const sunFiles = matchingFiles.filter(isSunInternationalIndexedFile);
       const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
@@ -1553,6 +1548,8 @@ export default function GuestNameExtractorPage() {
   const [query, setQuery] = useState("");
   const [multipleSearchQuery, setMultipleSearchQuery] = useState("");
   const [multipleDraftQuery, setMultipleDraftQuery] = useState("");
+  const [multipleCardsData, setMultipleCardsData] = useState<MultipleCard[]>([]);
+  const [multipleSearching, setMultipleSearching] = useState(false);
   const [viewMode, setViewMode] = useState<"single" | "multiple">("single");
 
   const [arrivalFrom, setArrivalFrom] = useState("");
@@ -1603,44 +1600,97 @@ export default function GuestNameExtractorPage() {
       setAttachmentSearchStatus("");
       setAttachmentPdfSearchTerm("");
     } else {
-     const [multipleCardsData, setMultipleCardsData] = useState<MultipleCard[]>([]);
-  const [multipleSearching, setMultipleSearching] = useState(false);
-  const multipleCards = useMemo(() => multipleCardsData.filter((card) => {
-    if (arrivalCompanyFilter === "all") return true;
-    const arrivalCompany = card.arrival ? arrivalCompanies.get(card.arrival.confirmationNo) : "";
-    const company = arrivalCompany && arrivalCompany !== "غير محددة"
-      ? arrivalCompany
-      : card.file?.company || "غير محددة";
-    return company === arrivalCompanyFilter;
-  }).sort((left, right) => {
-    if (multipleSort === "company") {
-      const companyCompare = (left.file?.company || "غير محددة").localeCompare(
-        right.file?.company || "غير محددة", "ar", { sensitivity: "base" },
-      );
-      if (companyCompare) return companyCompare;
+      setMsgPreviewError("تم فتح رسالة MTS، لكن لم يتم العثور على ملف PDF مرفق بها.");
     }
-    if (multipleSort === "room" || multipleSort === "company") {
-      return (left.arrival?.roomNo || "").localeCompare(right.arrival?.roomNo || "", undefined, { numeric: true });
-    }
-    return 0;
-  }), [multipleCardsData, multipleSort, arrivalCompanyFilter, arrivalCompanies]);
+  }, [autoOpenMtsVoucher, selected, msgPreview]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [restoreComplete, setRestoreComplete] = useState(false);
+  const [storageMessage, setStorageMessage] = useState("جارٍ استعادة المجلد المحفوظ...");
+  const [arrivals, setArrivals] = useState<ArrivalRecord[]>([]);
+  const [arrivalReportName, setArrivalReportName] = useState("");
+  const [arrivalStatus, setArrivalStatus] = useState("");
+  const [arrivalBusy, setArrivalBusy] = useState(false);
+  const arrivalInputRef = useRef<HTMLInputElement>(null);
+  const nativeScanInProgressRef = useRef(false);
 
-  async function runMultipleSearch() {
-    const searchText = multipleDraftQuery.trim();
-    if (!searchText || multipleSearching || busy) return;
-    setMultipleSearching(true);
-    setMultipleSearchQuery(searchText);
-    setMultipleCardsData([]);
-    // Give React time to paint the spinner before the CPU-intensive file matching starts.
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 40));
-    try {
-      const cards = buildMultipleCards(searchText, files, arrivals);
-      setMultipleCardsData(cards);
-    } finally {
-      setMultipleSearching(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { setIsDesktop(Boolean(window.desktopBridge)); }, []);
+
+  useEffect(() => {
+    if (!isDesktop || !nativeFolderPath || !window.desktopBridge) return;
+    // Folder watcher notifications must never trigger a full re-index.
+    // Searching is always performed against the in-memory index loaded once
+    // when the app opens. The user can explicitly refresh if files changed.
+    const unsubscribe = window.desktopBridge.onFolderChanged(() => {
+      setStorageMessage("تم رصد تغيير في مجلد الحجوزات. نتائج البحث الحالية تستخدم الفهرس المحمّل؛ اضغط «فحص التحديثات» فقط إذا أردت إعادة الفهرسة.");
+    });
+    return () => {
+      unsubscribe();
+      void window.desktopBridge?.unwatchFolder();
+    };
+  }, [isDesktop, nativeFolderPath]);
+
+  useEffect(() => {
+    let active = true;
+    async function restoreSession() {
+      try {
+        const savedState = JSON.parse(localStorage.getItem(GUEST_STATE_KEY) || "{}");
+        const savedNativePath = window.desktopBridge ? localStorage.getItem(NATIVE_FOLDER_KEY) || "" : "";
+        if (!active) return;
+        const savedArrivals = JSON.parse(localStorage.getItem(ARRIVAL_REPORT_KEY) || "[]");
+        if (Array.isArray(savedArrivals)) setArrivals(savedArrivals as ArrivalRecord[]);
+        setFolderName(String(savedState.folderName || ""));
+        setQuery(String(savedState.query || ""));
+        setCurrentPage(Math.max(1, Number(savedState.currentPage) || 1));
+        setNativeFolderPath(savedNativePath);
+        setStorageMessage(savedNativePath
+          ? "تم استعادة مسار مجلد الحجوزات. جارٍ قراءة الملفات الأصلية مباشرة..."
+          : "اختر مجلد الحجوزات للبدء. لا يتم إنشاء قاعدة بيانات أو حفظ نسخ من الملفات.");
+        if (savedNativePath && window.desktopBridge) void scanNativeFolder(savedNativePath);
+      } catch {
+        if (active) setStorageMessage("تعذرت استعادة مسار مجلد الحجوزات. اختر المجلد مرة أخرى.");
+      } finally {
+        if (active) setRestoreComplete(true);
+      }
     }
-  }
-matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, query);
+    void restoreSession();
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!restoreComplete) return;
+    try {
+      localStorage.setItem(GUEST_STATE_KEY, JSON.stringify({
+        folderName,
+        query,
+        selectedId: selected?.id || null,
+        currentPage,
+      }));
+    } catch { /* تجاهل تعذر حفظ حالة العرض */ }
+  }, [restoreComplete, folderName, query, selected, currentPage]);
+
+  const previewUrl = useMemo(() => selected
+    ? URL.createObjectURL(new Blob([selected.file], { type: getPreviewMimeType(selected.extension) }))
+    : "", [selected]);
+  useEffect(() => () => { if (previewUrl) URL.revokeObjectURL(previewUrl); }, [previewUrl]);
+
+  const results = useMemo<SearchResult[]>(() => {
+    const q = normalize(query);
+    if (!q) return [];
+
+    // Resolve room/confirmation numbers through arr.pdf, then search by guest name.
+    const linkedArrivalGuests = arrivals.filter((item) =>
+      normalize(item.roomNo).replace(/\s+/g, "") === q.replace(/\s+/g, "")
+      || normalize(item.confirmationNo).replace(/\s+/g, "") === q.replace(/\s+/g, "")
+    );
+    const isArrivalNumberSearch = linkedArrivalGuests.length > 0;
+    const matchingArrivalNames = linkedArrivalGuests.map((item) => item.name);
+
+    const matchedResults = files.flatMap((item) => {
+      const matchedPages = item.pages.reduce<number[]>((acc, page, index) => {
+        const searchable = [item.name, item.path, item.company, page].join(" ");
+        const matchesLinkedGuest = matchingArrivalNames.some((name) => arrivalNameMatchesText(name, searchable));
+        const matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, query);
         if (matchesDirectQuery || matchesLinkedGuest) {
           acc.push(index + 1);
         }
@@ -1700,70 +1750,35 @@ matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, que
     ).sort((x, y) => x.arrivalTime.localeCompare(y.arrivalTime));
   }, [arrivals, arrivalFrom, arrivalTo, arrivalCompanyFilter, arrivalCompanies]);
 
-  const multipleCards = useMemo(() => {
-    const terms = multipleSearchQuery.split(/[，,;؛\\n]+/).map((part) => part.trim()).filter(Boolean);
-    return terms.map((term, index) => {
-      const compact = normalize(term).replace(/\\s+/g, "");
-      const arrival = arrivals.find((item) =>
-        normalize(item.roomNo).replace(/\\s+/g, "") === compact
-        || normalize(item.confirmationNo).replace(/\\s+/g, "") === compact
-        || (/[\\p{L}]/u.test(term) && normalize(item.name).includes(normalize(term)))
-      ) || null;
-      const matchingFiles = arrival
-        ? files.filter((candidate) => candidate.pages.some((page) =>
-            arrivalNameMatchesText(arrival.name, [candidate.name, candidate.path, candidate.company, page].join(" "))))
-        : files.filter((candidate) => candidate.pages.some((page) =>
-            matchesSearchText([candidate.name, candidate.path, candidate.company, page].join(" "), term)));
-      const mtsFiles = matchingFiles.filter((candidate) => isMtsIndexedFile(candidate));
-      const folderPath = mtsFiles[0]?.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
-      const folderFiles = folderPath ? files.filter((candidate) => isMtsIndexedFile(candidate) && candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase() === folderPath) : [];
-      const bookingMessages = folderFiles.filter((candidate) => candidate.extension.toLowerCase() === "msg" && /^\d+\.msg$/i.test(candidate.name));
-      const prioritizedMtsFiles = bookingMessages.length ? bookingMessages : folderFiles.filter((candidate) => /guest\s*voucher/i.test(candidate.name) && ["pdf", "msg"].includes(candidate.extension.toLowerCase()));
-      const sunFiles = matchingFiles.filter((candidate) => isSunInternationalIndexedFile(candidate));
-      const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
-        const priority = (candidate: IndexedFile) => {
-          if (candidate.extension !== "pdf") return candidate.extension === "msg" ? 4 : 5;
-          const filename = candidate.name.split(/[\\/]/).pop() || candidate.name;
-          if (/^hotel2sejour\.pdf$/i.test(filename)) return 0;
-          if (/^final\.pdf$/i.test(filename)) return 1;
-          if (/^reservations\s*\(\s*\d+\s*\)\.pdf$/i.test(filename)) return 2;
-          if (/^\d+\.pdf$/i.test(filename)) return 3;
-          if (/\bHOTEL\s+C\/IN\s+LIST\b/i.test(candidate.content + " " + candidate.pages.join(" "))) return 4;
-          return 5;
-        };
-        return priority(left) - priority(right);
-      });
-      const file = prioritizedMtsFiles[0] || (mtsFiles.length ? null : prioritizedSunFiles[0] || matchingFiles[0] || null);
-      const people = file ? extractPeopleForMultipleView(file, arrival?.name || term, true) : [];
-      // Preserve repeated guest rows for MTS, SUN and W2M; each row is a traveler.
-      const uniquePeople = file && (isMtsIndexedFile(file) || isSunInternationalIndexedFile(file) || isW2mIndexedFile(file))
-        ? people
-        : people.filter((person, personIndex, all) =>
-            all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
-              && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
-      return { key: index + "-" + compact, term, arrival, file, people: uniquePeople };
-    }).filter((card) => {
-      if (arrivalCompanyFilter === "all") return true;
-      const arrivalCompany = card.arrival ? arrivalCompanies.get(card.arrival.confirmationNo) : "";
-      const company = arrivalCompany && arrivalCompany !== "غير محددة"
-        ? arrivalCompany
-        : card.file?.company || "غير محددة";
-      return company === arrivalCompanyFilter;
-    }).sort((left, right) => {
-      if (multipleSort === "company") {
-        const companyCompare = (left.file?.company || "غير محددة").localeCompare(
-          right.file?.company || "غير محددة", "ar", { sensitivity: "base" },
-        );
-        if (companyCompare) return companyCompare;
-      }
-      if (multipleSort === "room" || multipleSort === "company") {
-        const leftRoom = left.arrival?.roomNo || "";
-        const rightRoom = right.arrival?.roomNo || "";
-        return leftRoom.localeCompare(rightRoom, undefined, { numeric: true });
-      }
-      return 0;
-    });
-  }, [multipleSearchQuery, arrivals, files, multipleSort, arrivalCompanyFilter, arrivalCompanies]);
+  const multipleCards = useMemo(() => multipleCardsData.filter((card) => {
+    if (arrivalCompanyFilter === "all") return true;
+    const arrivalCompany = card.arrival ? arrivalCompanies.get(card.arrival.confirmationNo) : "";
+    const company = arrivalCompany && arrivalCompany !== "غير محددة" ? arrivalCompany : card.file?.company || "غير محددة";
+    return company === arrivalCompanyFilter;
+  }).sort((left, right) => {
+    if (multipleSort === "company") {
+      const companyCompare = (left.file?.company || "غير محددة").localeCompare(right.file?.company || "غير محددة", "ar", { sensitivity: "base" });
+      if (companyCompare) return companyCompare;
+    }
+    if (multipleSort === "room" || multipleSort === "company") {
+      return (left.arrival?.roomNo || "").localeCompare(right.arrival?.roomNo || "", undefined, { numeric: true });
+    }
+    return 0;
+  }), [multipleCardsData, multipleSort, arrivalCompanyFilter, arrivalCompanies]);
+
+  async function runMultipleSearch() {
+    const searchText = multipleDraftQuery.trim();
+    if (!searchText || multipleSearching || busy) return;
+    setMultipleSearching(true);
+    setMultipleSearchQuery(searchText);
+    setMultipleCardsData([]);
+    await new Promise<void>((resolve) => window.setTimeout(resolve, 40));
+    try {
+      setMultipleCardsData(buildMultipleCards(searchText, files, arrivals));
+    } finally {
+      setMultipleSearching(false);
+    }
+  }
 
   const companies = useMemo(() => new Set(files.map((file) => file.company).filter((name) => name !== "غير محددة")).size, [files]);
   const totalSize = useMemo(() => files.reduce((sum, file) => sum + file.size, 0), [files]);
@@ -2513,10 +2528,8 @@ matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, que
           <h2>البحث المتعدد</h2>
           <p className="muted">هذا البحث مستقل عن Single View. اكتب أرقام الغرف أو الأرقام التأكيدية أو أسماء النزلاء، وافصل بينها بفاصلة، ثم اضغط «بحث» لعرض النتائج.</p>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0" }}>
-            <button type="button" className="add-button" onClick={() => void runMultipleSearch()} disabled={!multipleDraftQuery.trim() || busy || multipleSearching}>
-              {multipleSearching ? <><span className="search-spinner" aria-hidden="true" /> جارٍ البحث...</> : "بحث"}
-            </button>
-            <button type="button" className="add-button" onClick={() => { setMultipleDraftQuery(""); setMultipleSearchQuery(""); setMultipleCardsData([]); }} disabled={!multipleDraftQuery && !multipleSearchQuery && !multipleCardsData.length}>مسح البحث</button>
+            <button type="button" className="add-button" onClick={() => setMultipleSearchQuery(multipleDraftQuery)} disabled={!query.trim() || busy}>بحث</button>
+            <button type="button" className="add-button" onClick={() => { setMultipleDraftQuery(""); setMultipleSearchQuery(""); }} disabled={!multipleDraftQuery && !multipleSearchQuery}>مسح البحث</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("room")} disabled={!arrivals.length}>نسخ كل أرقام الغرف</button>
             <button type="button" className="add-button" onClick={() => void copyArrivalNumbers("confirmation")} disabled={!arrivals.length}>نسخ كل الأرقام التأكيدية</button>
           </div>
@@ -2544,7 +2557,7 @@ matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, que
                 border: isGreen ? "1px solid #81c784" : undefined
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <strong>{card.arrival?.name || card.file?.name || card.term}</strong>
+                  <strong>{isMtsIndexedFile(card.file) ? card.file?.name : card.arrival?.name || card.file?.name || card.term}</strong>
                   <button type="button" className="add-button" onClick={() => setGreenCards((current) =>
                     current.includes(card.key) ? current.filter((key) => key !== card.key) : [...current, card.key]
                   )}>{isGreen ? "اللون الافتراضي" : "تمييز بالأخضر"}</button>
