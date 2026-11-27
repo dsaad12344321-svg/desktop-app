@@ -108,6 +108,33 @@ function startLocalServer(port) {
 }
 
 function registerSafeDesktopApi() {
+  const savedFolderPathFile = path.join(app.getPath("userData"), "reservation-folder-path.txt");
+
+  ipcMain.handle("desktop:get-saved-folder-path", async () => {
+    try {
+      const savedPath = (await fs.promises.readFile(savedFolderPathFile, "utf8")).trim();
+      if (!savedPath || !path.isAbsolute(savedPath)) return "";
+      return savedPath;
+    } catch (error) {
+      if (error && error.code === "ENOENT") return "";
+      throw error;
+    }
+  });
+
+  ipcMain.handle("desktop:save-folder-path", async (_event, selectedPath) => {
+    if (typeof selectedPath !== "string" || !path.isAbsolute(selectedPath)) throw new Error("Invalid folder path.");
+    const stat = await fs.promises.stat(selectedPath);
+    if (!stat.isDirectory()) throw new Error("The selected path is not a folder.");
+    await fs.promises.mkdir(path.dirname(savedFolderPathFile), { recursive: true });
+    await fs.promises.writeFile(savedFolderPathFile, path.resolve(selectedPath), "utf8");
+    return true;
+  });
+
+  ipcMain.handle("desktop:clear-saved-folder-path", async () => {
+    try { await fs.promises.unlink(savedFolderPathFile); }
+    catch (error) { if (!error || error.code !== "ENOENT") throw error; }
+    return true;
+  });
   ipcMain.handle("desktop:get-app-info", () => ({
     name: app.getName(),
     version: app.getVersion(),
