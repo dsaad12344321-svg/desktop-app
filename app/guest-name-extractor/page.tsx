@@ -1341,6 +1341,24 @@ function extractPeopleForMultipleView(
     );
   }
 
+  // FUN&SUN batch PDFs (Reservations (n), download.pdf, Hotel2Sejour.pdf)
+  // contain many independent vouchers. Parse each page separately and keep
+  // only the page containing the searched arrival guest. Parsing the joined
+  // document makes extractPeople stop at the first "Agency Note" and can
+  // therefore return the first booking's guests instead of the matching room.
+  if (isFunSunIndexedFile(file)) {
+    const sourcePages = isMsg
+      ? (file.attachmentPages || []).filter((attachment) => /\\.pdf$/i.test(attachment.name)).flatMap((attachment) => attachment.pages)
+      : (file.visualPages?.length ? file.visualPages : file.pages);
+    const matchingPages = sourcePages.filter((page) => {
+      if (!searchTerm.trim()) return true;
+      return arrivalNameMatchesText(searchTerm, page) || matchesSearchText(page, searchTerm);
+    });
+    return matchingPages.flatMap((page) =>
+      extractPeople(page, "", file.company, enableSunCheckInList),
+    );
+  }
+
   if (isSun) {
     const sourcePages = isMsg
       ? file.pages.slice(1).filter((page) => page.trim())
@@ -2319,7 +2337,7 @@ export default function GuestNameExtractorPage() {
       const normalizedPage = normalize(page);
       if (isBookingNumber && normalizedPage.replace(/\s+/g, "").includes(compactQuery)) return true;
       const pageTokens = new Set(normalizedPage.split(/\s+/));
-      return nameTokens.length >= 2 && nameTokens.every((token) => pageTokens.has(token));
+      return nameTokens.length >= 2 && arrivalNameMatchesText(guestName || searchTerm, page);
     });
     // Do not silently print page 1 when the guest could not be located.
     return matchIndex >= 0 ? matchIndex + 1 : 0;
