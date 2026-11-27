@@ -2576,7 +2576,7 @@ export default function GuestNameExtractorPage() {
                 border: isGreen ? "1px solid #81c784" : undefined
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <strong>{isMtsIndexedFile(card.file) ? card.file?.name : card.arrival?.name || card.file?.name || card.term}</strong>
+                  <strong>{card.arrival?.name || card.file?.name || card.term}</strong>
                   <button type="button" className="add-button" onClick={() => setGreenCards((current) =>
                     current.includes(card.key) ? current.filter((key) => key !== card.key) : [...current, card.key]
                   )}>{isGreen ? "اللون الافتراضي" : "تمييز بالأخضر"}</button>
