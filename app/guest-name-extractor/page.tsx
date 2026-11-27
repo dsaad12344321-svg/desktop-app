@@ -1891,6 +1891,7 @@ export default function GuestNameExtractorPage() {
     if (nativeScanInProgressRef.current) return;
     nativeScanInProgressRef.current = true;
     setBusy(true); setError(""); setWarnings([]); setFiles([]); setQuery(""); setSelected(null);
+    setMultipleDraftQuery(""); setMultipleSearchQuery(""); setMultipleCardsData([]);
     setNativeFolderPath(rootPath);
     setFolderName(rootPath);
     localStorage.setItem(NATIVE_FOLDER_KEY, rootPath);
