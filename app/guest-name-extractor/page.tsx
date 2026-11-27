@@ -848,11 +848,14 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
   const isW2mBooking = /^w2m$/i.test(company.trim())
     || /noreply@w2m\.com|world\s*2\s*meet|world2meet/i.test(clean)
     || (/\bBooking\s+Code\b/i.test(clean)
-      && /\bPassenger\s+Name\b/i.test(clean)
-      && /\bPassenger\s+Last\s+Name\b/i.test(clean));
+      && ((/\bPassenger\s+Name\b/i.test(clean)
+        && /\bPassenger\s+Last\s+Name\b/i.test(clean))
+        || /\bPassengers?\s*:/i.test(clean)));
   if (isW2mBooking) {
-    const w2mPeople = extractW2mPeople(text, searchTerm);
-    if (w2mPeople.length) return w2mPeople;
+    // Never fall through to generic name guessing for a W2M booking.
+    // If its passenger section cannot be parsed, returning no names is safer
+    // than treating promotional/special-remarks text as guessed names.
+    return extractW2mPeople(text, searchTerm);
   }
 
   // TUI Destimo voucher: the PDF text extractor may emit the room columns
@@ -1240,6 +1243,16 @@ function extractPeopleForMultipleView(
   const isMsg = file.extension.toLowerCase() === "msg";
   const isSun = isSunInternationalIndexedFile(file);
   const isMts = isMtsIndexedFile(file);
+
+  // W2M sends the authoritative guest list in the Outlook email body under
+  // "Passengers:". Parse that body directly before generic supplier logic;
+  // do not let promotional text in Special remarks become guessed names.
+  if (isW2mIndexedFile(file)) {
+    const source = isMsg
+      ? (file.pages[0] || file.content || "")
+      : (file.visualPages?.length ? file.visualPages.join("\n") : file.pages.join("\n")) || file.content || "";
+    return extractW2mPeople(source, searchTerm);
+  }
 
   if (isMts) {
     // MTS bookings commonly arrive as Outlook MSG files with voucher PDFs.
