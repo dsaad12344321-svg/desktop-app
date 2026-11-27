@@ -1354,7 +1354,20 @@ function extractPeopleFromIndexedFile(
     const voucherPages = isMsg
       ? (file.attachmentPages || []).filter((attachment) => /guest\s*voucher/i.test(attachment.name)).flatMap((attachment) => attachment.pages)
       : /guest\s*voucher/i.test(file.name) ? file.pages : [];
-    return voucherPages.flatMap((page) => extractPeople(page, searchTerm, file.company, enableSunCheckInList, true));
+    if (!voucherPages.length) return [];
+    const compactQuery = normalize(searchTerm).replace(/\s+/g, "");
+    const queryIsBookingNumber = /^\d{5,12}$/.test(compactQuery);
+    const bookingMatches = queryIsBookingNumber && (
+      file.name.replace(/\.msg$|\.pdf$/i, "") === compactQuery
+      || voucherPages.some((page) => getMtsVoucherReference(page) === compactQuery)
+    );
+    const matchingVoucher = !searchTerm.trim() || bookingMatches || voucherPages.some((page) =>
+      arrivalNameMatchesText(searchTerm, page) || matchesSearchText(page, searchTerm),
+    );
+    if (!matchingVoucher) return [];
+    // A match on the arrival guest identifies the booking, not just that
+    // single traveler. Return every guest and DOB from the complete voucher.
+    return voucherPages.flatMap((page) => extractPeople(page, "", file.company, enableSunCheckInList, true));
   }
   if (!isMsg) {
     const source = /alltour/i.test(file.company)
