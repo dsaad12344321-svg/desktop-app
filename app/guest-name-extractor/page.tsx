@@ -136,6 +136,11 @@ function getPreviewMimeType(extension: string) {
 type VoucherRule = { id: string; company: string; aliases: string[]; parser: string; signatures: string[]; bookingIdentifiers: string[]; guestFields: string[] };
 const configuredVoucherRules = voucherRules as { version: number; rules: VoucherRule[]; searchFields: string[] };
 
+function isFunSunAlias(value: string) {
+  const cleaned = value.replace(/&#x0*20;|&#0*32;|&nbsp;/gi, " ").replace(/\s+/g, " ").trim().toLocaleLowerCase();
+  return /^(?:fun(?:\s*(?:&|and)?\s*sun)?|fun\s*sun)$/.test(cleaned);
+}
+
 function detectVoucherCompany(text: string, currentCompany = "") {
   if (/noreply@w2m\.com|world\s*2\s*meet|world2meet/i.test(text)
     || (/\bBooking\s+Code\b/i.test(text)
@@ -1258,6 +1263,23 @@ function isSunInternationalIndexedFile(file: SunIndexedFile | null | undefined) 
     || hasCheckInList;
 }
 
+function isFunSunIndexedFile(file: Pick<IndexedFile, "company" | "content" | "pages" | "name" | "path"> | null | undefined) {
+  if (!file) return false;
+  const searchable = [file.name, file.path, file.content, ...file.pages].join(" ");
+  return isFunSunAlias(file.company)
+    || /FUN\s*&\s*SUN|FUN\s+SUN|FUN\s+AND\s+SUN|EX\s+TUI\s+RUSSIA/i.test(searchable);
+}
+
+function getFunSunFilePriority(file: Pick<IndexedFile, "name" | "extension">) {
+  if (file.extension.toLowerCase() !== "pdf") return 5;
+  const base = file.name.replace(/\.pdf$/i, "").trim();
+  if (/^\d+[+-]?amend$/i.test(base)) return 0;
+  if (/^\d{5,12}$/.test(base)) return 1;
+  if (/^\d{5,12}(?:[,_\s-].+|[+-].+)$/i.test(base)) return 2;
+  if (/^reservations\s*\(\s*\d+\s*\)$/i.test(base) || /^download$/i.test(base) || /^hotel2sejour$/i.test(base)) return 3;
+  return 4;
+}
+
 /**
  * Parse SUN batch PDFs page-by-page so a name or reservation search returns
  * only the matching reservation page(s), not passengers from every booking
@@ -1621,6 +1643,10 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
         const text = searchableText.get(candidate.id) || "";
         return arrival ? arrivalNameMatchesText(targetName, text) : matchesSearchText(text, term);
       });
+      const funSunFiles = matchingFiles.filter(isFunSunIndexedFile);
+      const prioritizedFunSunFiles = [...funSunFiles].sort((left, right) =>
+        getFunSunFilePriority(left) - getFunSunFilePriority(right),
+      );
       const sunFiles = matchingFiles.filter(isSunInternationalIndexedFile);
       const prioritizedSunFiles = [...sunFiles].sort((left, right) => {
         const priority = (candidate: IndexedFile) => {
@@ -1635,7 +1661,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
         };
         return priority(left) - priority(right);
       });
-      file = prioritizedSunFiles[0] || matchingFiles[0] || null;
+      file = prioritizedFunSunFiles[0] || prioritizedSunFiles[0] || matchingFiles[0] || null;
       people = file ? extractPeopleForMultipleView(file, targetName, true) : [];
     }
 
