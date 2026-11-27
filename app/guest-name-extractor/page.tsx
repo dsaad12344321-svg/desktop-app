@@ -963,7 +963,7 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
         || /^\d{3,9}$/.test(compactSearch)
         || funSunPeople.some((person) => {
           const nameParts = normalize(person.name).split(/\s+/).filter(Boolean);
-          const queryParts = normalizedSearch.split(/\s+/).filter(Boolean);
+          const queryParts = getSunSearchTokens(normalizedSearch);
           return normalize(person.name).includes(normalizedSearch)
             || (queryParts.length > 0 && queryParts.every((token) =>
               nameParts.some((part) => part.includes(token)),
@@ -2310,15 +2310,19 @@ export default function GuestNameExtractorPage() {
 
   function findFunSunVoucherPage(item: IndexedFile, searchTerm: string, guestName = "") {
     const pages = item.visualPages?.length ? item.visualPages : item.pages;
-    const compactQuery = normalize(searchTerm).replace(/\\s+/g, "");
-    const isBookingNumber = /^\\d{3,9}$/.test(compactQuery);
-    const nameTokens = normalize(guestName || searchTerm).split(/\\s+/).filter((token) => token.length > 1);
+    const compactQuery = normalize(searchTerm).replace(/\s+/g, "");
+    const isBookingNumber = /^\d{3,9}$/.test(compactQuery);
+    // Arrival reports can include punctuation and titles, e.g. "MIGULIN, Mr. KIRILL".
+    // Ignore titles and compare individual normalized name tokens.
+    const nameTokens = getSunSearchTokens(guestName || searchTerm);
     const matchIndex = pages.findIndex((page) => {
       const normalizedPage = normalize(page);
-      if (isBookingNumber && normalizedPage.replace(/\\s+/g, "").includes(compactQuery)) return true;
-      return nameTokens.length >= 2 && nameTokens.every((token) => normalizedPage.includes(token));
+      if (isBookingNumber && normalizedPage.replace(/\s+/g, "").includes(compactQuery)) return true;
+      const pageTokens = new Set(normalizedPage.split(/\s+/));
+      return nameTokens.length >= 2 && nameTokens.every((token) => pageTokens.has(token));
     });
-    return matchIndex >= 0 ? matchIndex + 1 : 1;
+    // Do not silently print page 1 when the guest could not be located.
+    return matchIndex >= 0 ? matchIndex + 1 : 0;
   }
 
   async function executeFunSunVoucherPrint(item: IndexedFile, pageInput: string) {
@@ -2906,8 +2910,22 @@ export default function GuestNameExtractorPage() {
                       <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...(card.voucherFile || card.file)!, matchedPages: [1] })}>استعراض الفاوتشر</button>
                       <button type="button" className="add-button" onClick={() => void printMtsVoucher((card.voucherFile || card.file)!, card.voucherPageNumber || 1)}>طباعة الفاوتشر</button>
                     </> : isFunSunIndexedFile(card.file) && card.file.extension.toLowerCase() === "pdf" ? <>
-                      <button type="button" className="add-button" onClick={() => void executeFunSunVoucherPrint(card.file!, String(findFunSunVoucherPage(card.file!, card.term, card.arrival?.name || "")))}>طباعة</button>
-                      <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [findFunSunVoucherPage(card.file!, card.term, card.arrival?.name || "")] })}>معاينة صفحة الفاوتشر</button>
+                      <button type="button" className="add-button" onClick={() => {
+                        const pageNumber = findFunSunVoucherPage(card.file!, card.term, card.arrival?.name || "");
+                        if (!pageNumber) {
+                          window.alert("لم أتمكن من تحديد صفحة النزيل بالاسم داخل هذا الملف. لن تتم طباعة الصفحة الأولى تلقائياً حتى لا تُطبع صفحة خاطئة.");
+                          return;
+                        }
+                        void executeFunSunVoucherPrint(card.file!, String(pageNumber));
+                      }}>طباعة</button>
+                      <button type="button" className="add-button" onClick={() => {
+                        const pageNumber = findFunSunVoucherPage(card.file!, card.term, card.arrival?.name || "");
+                        if (!pageNumber) {
+                          window.alert("لم أتمكن من تحديد صفحة النزيل بالاسم داخل هذا الملف.");
+                          return;
+                        }
+                        openPreview({ ...card.file!, matchedPages: [pageNumber] });
+                      }}>معاينة صفحة الفاوتشر</button>
                     </> : isAnexIndexedFile(card.file) && card.file.extension.toLowerCase() === "pdf" ? <>
                       <button type="button" className="add-button" onClick={() => void executeAnexVoucherPrint(card.file!, String(findAnexVoucherPage(card.file!, card.term, card.arrival?.name || "")))}>طباعة</button>
                       <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [findAnexVoucherPage(card.file!, card.term, card.arrival?.name || "")] })}>معاينة صفحة الفاوتشر</button>
