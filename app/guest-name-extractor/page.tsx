@@ -1213,6 +1213,8 @@ function extractPeopleForMultipleView(
       : (file.visualPages?.length ? file.visualPages : file.pages).filter((page) => page.trim());
     const compactQuery = normalize(searchTerm).replace(/\s+/g, "");
     const queryIsNumeric = /^\d{5,12}$/.test(compactQuery);
+    const filenameMatchesBooking = queryIsNumeric
+      && normalize(file.name).replace(/\s+/g, "").replace(/\.msg$|\.pdf$/i, "") === compactQuery;
     const hasBookingReference = (page: string) => {
       const references = Array.from(page.matchAll(
         /\b(?:booking|reservation|confirmation)\s*(?:number|no\.?|reference|ref\.?|#)?\s*[:#-]?\s*([A-Z0-9-]{5,})/gi,
@@ -1224,6 +1226,7 @@ function extractPeopleForMultipleView(
       if (queryIsNumeric) return hasBookingReference(page);
       return matchesSearchText(page, searchTerm) || arrivalNameMatchesText(searchTerm, page);
     });
+    if (!matchingPages.length && filenameMatchesBooking) matchingPages = sourcePages;
     if (!matchingPages.length && isMsg && queryIsNumeric && hasBookingReference(file.pages[0] || "")) {
       matchingPages = sourcePages;
     }
@@ -1957,7 +1960,8 @@ export default function GuestNameExtractorPage() {
         for (const row of rows) {
           const extracted = msgReader.getAttachment(row);
           const name = String(extracted.fileName || row.fileName || row.name || "");
-          if (!name.toLowerCase().endsWith(".pdf")) continue;
+          const declaredMime = String(row.attachMimeTag || "").split(";")[0].trim().toLowerCase();
+          if (!name.toLowerCase().endsWith(".pdf") && declaredMime !== "application/pdf") continue;
           voucherBlob = new Blob([new Uint8Array(extracted.content).buffer as ArrayBuffer], { type: "application/pdf" });
           break;
         }
