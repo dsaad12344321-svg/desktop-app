@@ -1348,7 +1348,7 @@ function extractPeopleForMultipleView(
   // therefore return the first booking's guests instead of the matching room.
   if (isFunSunIndexedFile(file)) {
     const sourcePages = isMsg
-      ? (file.attachmentPages || []).filter((attachment) => /\\.pdf$/i.test(attachment.name)).flatMap((attachment) => attachment.pages)
+      ? (file.attachmentPages || []).filter((attachment) => /\.pdf$/i.test(attachment.name)).flatMap((attachment) => attachment.pages)
       : (file.visualPages?.length ? file.visualPages : file.pages);
     const matchingPages = sourcePages.filter((page) => {
       if (!searchTerm.trim()) return true;
