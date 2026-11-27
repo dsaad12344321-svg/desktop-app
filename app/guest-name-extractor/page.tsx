@@ -6,7 +6,7 @@ import voucherRules from "./voucher-extraction-rules.json";
 type IndexedFile = {
   id: string; name: string; path: string; company: string; extension: string;
   day?: string; month?: string;
-  size: number; content: string; pages: string[]; file: File;
+  size: number; content: string; pages: string[]; visualPages?: string[]; file: File;
 };
 type SearchResult = IndexedFile & { matchedPages: number[] };
 type MsgAttachmentPreview = { name: string; type: string; blob: Blob; url: string; size: number };
@@ -211,7 +211,7 @@ function getNativeFolderMetadata(relativePath: string): { company: string; day?:
   return { company: parts.length > 1 ? parts[0] : "غير محددة" };
 }
 
-async function extractText(file: File, extension: string): Promise<{ content: string; pages: string[] }> {
+async function extractText(file: File, extension: string): Promise<{ content: string; pages: string[]; visualPages?: string[] }> {
   // Images are indexed by filename and previewed directly; OCR is not attempted here.
   if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"].includes(extension)) {
     return { content: "", pages: [""] };
@@ -319,12 +319,15 @@ async function extractText(file: File, extension: string): Promise<{ content: st
     pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
     const pdf = await pdfjs.getDocument({ data: new Uint8Array(buffer) }).promise;
     const pages: string[] = [];
+    const visualPages: string[] = [];
     for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
       const page = await pdf.getPage(pageNumber);
       const text = await page.getTextContent();
-      // Preserve visual table rows in standalone PDFs. This is especially
-      // important for SUN HOTEL C/IN LIST files, whose voucher number and
-      // passenger rows are separated into columns in the original PDF.
+      // Preserve the original flat page text for Single View.
+      pages.push(text.items.map((item) => ("str" in item ? item.str : "")).join(" "));
+
+      // Keep a second, visually ordered representation for Multiple View.
+      // SUN HOTEL C/IN LIST rows depend on their original table layout.
       const positionedItems = text.items
         .filter((item): item is typeof item & { str: string; transform: number[] } =>
           "str" in item && "transform" in item && Boolean(item.str?.trim()))
@@ -342,12 +345,12 @@ async function extractText(file: File, extension: string): Promise<{ content: st
         }
         row.cells.push({ x: item.x, text: item.text });
       }
-      pages.push(visualRows
+      visualPages.push(visualRows
         .sort((a, b) => b.y - a.y)
         .map((row) => row.cells.sort((a, b) => a.x - b.x).map((cell) => cell.text).join(" "))
         .join("\n"));
     }
-    return { content: pages.join("\n"), pages };
+    return { content: pages.join("\n"), pages, visualPages };
   }
   return { content: "", pages: [""] };
 }
@@ -1026,11 +1029,11 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
 }
 
 
-type SunIndexedFile = Pick<IndexedFile, "extension" | "pages" | "content" | "company" | "name" | "path">;
+type SunIndexedFile = Pick<IndexedFile, "extension" | "pages" | "visualPages" | "content" | "company" | "name" | "path">;
 
 function isSunInternationalIndexedFile(file: SunIndexedFile) {
   const company = normalize(file.company);
-  const searchable = [file.name, file.path, file.content, ...file.pages].join(" ");
+  const searchable = [file.name, file.path, file.content, ...file.pages, ...(file.visualPages || [])].join(" ");
   const hasPassengerTable = /surname\s*,?\s*name/i.test(searchable)
     && /\bbirthdate\b/i.test(searchable)
     && /\btitle\b/i.test(searchable)
@@ -1051,8 +1054,8 @@ function isSunInternationalIndexedFile(file: SunIndexedFile) {
  * in Hotel2Sejour / Final / Reservations files. For MSG files, inspect PDF
  * attachment pages before falling back to the email body.
  */
-function extractPeopleFromIndexedFile(
-  file: Pick<IndexedFile, "extension" | "pages" | "content" | "company" | "name" | "path">,
+function extractPeopleForMultipleView(
+  file: Pick<IndexedFile, "extension" | "pages" | "visualPages" | "content" | "company" | "name" | "path">,
   searchTerm: string,
   enableSunCheckInList = false,
 ) {
@@ -1062,7 +1065,7 @@ function extractPeopleFromIndexedFile(
   if (isSun) {
     const sourcePages = isMsg
       ? file.pages.slice(1).filter((page) => page.trim())
-      : file.pages.filter((page) => page.trim());
+      : (file.visualPages?.length ? file.visualPages : file.pages).filter((page) => page.trim());
     const filename = (file.name || file.path || "").split(/[\\/]/).pop() || "";
     const compactQuery = normalize(searchTerm).replace(/\s+/g, "");
     const numericFilename = /^\d+\.pdf$/i.test(filename);
@@ -1114,6 +1117,39 @@ function extractPeopleFromIndexedFile(
 
   // Last fallback: some voucher layouts are page-oriented and should not
   // accidentally combine rows from separate attachments/pages.
+  return attachmentPages.flatMap((page) => extractPeople(page, searchTerm, file.company, enableSunCheckInList));
+}
+
+/**
+ * Preserve the established extraction route used by Single View. The new
+ * page-aware SUN resolver above is intentionally limited to Multiple View.
+ */
+function extractPeopleFromIndexedFile(
+  file: Pick<IndexedFile, "extension" | "pages" | "content" | "company">,
+  searchTerm: string,
+  enableSunCheckInList = false,
+) {
+  const isMsg = file.extension.toLowerCase() === "msg";
+  if (!isMsg) {
+    const source = /alltour/i.test(file.company)
+      ? file.pages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
+      : file.pages.join("\n\n");
+    return extractPeople(source || file.content || "", searchTerm, file.company, enableSunCheckInList);
+  }
+
+  const emailBody = file.pages[0] || file.content || "";
+  const fromEmail = extractPeople(emailBody, searchTerm, file.company, enableSunCheckInList);
+  if (fromEmail.length) return fromEmail;
+
+  const attachmentPages = file.pages.slice(1).filter((page) => page.trim());
+  if (!attachmentPages.length) return [];
+
+  const attachmentText = /alltour/i.test(file.company)
+    ? attachmentPages.join("\n\n--- ALLTOUR PAGE BREAK ---\n\n")
+    : attachmentPages.join("\n\n");
+  const fromAllAttachments = extractPeople(attachmentText, searchTerm, file.company, enableSunCheckInList);
+  if (fromAllAttachments.length) return fromAllAttachments;
+
   return attachmentPages.flatMap((page) => extractPeople(page, searchTerm, file.company, enableSunCheckInList));
 }
 
@@ -1299,7 +1335,7 @@ export default function GuestNameExtractorPage() {
         return priority(left) - priority(right);
       });
       const file = prioritizedSunFiles[0] || matchingFiles[0] || null;
-      const people = file ? extractPeopleFromIndexedFile(file, arrival?.name || term, true) : [];
+      const people = file ? extractPeopleForMultipleView(file, arrival?.name || term, true) : [];
       // Preserve repeated SUN guest rows; keep existing de-duplication for other companies.
       const uniquePeople = file && isSunInternationalIndexedFile(file)
         ? people
@@ -1391,7 +1427,7 @@ export default function GuestNameExtractorPage() {
         const folderMetadata = getFolderMetadata(path);
         indexed.push({ id: path + "-" + file.lastModified + "-" + index, name: file.name, path,
           ...folderMetadata, extension, size: file.size, content: extracted.content,
-          pages: extracted.pages, file });
+          pages: extracted.pages, visualPages: extracted.visualPages, file });
       } catch { failed.push(path); }
       setProgress({ done: index + 1, total: readable.length });
     }
@@ -1449,6 +1485,7 @@ export default function GuestNameExtractorPage() {
             size: entry.size,
             content: extracted.content,
             pages: extracted.pages,
+            visualPages: extracted.visualPages,
             file,
           });
         } catch {
@@ -1746,10 +1783,8 @@ export default function GuestNameExtractorPage() {
     window.setTimeout(() => URL.revokeObjectURL(url), 60000);
   }
 
-  async function copyGuestDetails(person: { name: string; dob: string }, preserveEmptyDobMarker = false) {
-    const value = person.dob
-      ? [person.name, person.dob === "لم يُعثر عليه" ? "" : person.dob].filter(Boolean).join(" - ")
-      : preserveEmptyDobMarker ? person.name + " -" : person.name;
+  async function copyGuestDetails(person: { name: string; dob: string }) {
+    const value = [person.name, person.dob === "لم يُعثر عليه" ? "" : person.dob].filter(Boolean).join(" - ");
     try {
       await navigator.clipboard.writeText(value);
       setDiagnosticStatus(`تم نسخ بيانات ${person.name}.`);
@@ -2054,8 +2089,8 @@ export default function GuestNameExtractorPage() {
           <h3>الأسماء وتواريخ الميلاد في الصفحة الحالية</h3>
           {extractedPeople.length ? <div className="folder-results">{extractedPeople.map((person, index) => (
             <div className="folder-result" key={index} dir="ltr" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, textAlign: "left", fontWeight: 700 }}>
-              <span>{selected.company.toLocaleLowerCase() === "easy jet" ? person.name : selected.company.toLocaleLowerCase() === "pegas" ? (person.name + " " + person.dob) : !person.dob || person.dob === "لم يُعثر عليه" ? (isSunInternationalIndexedFile(selected) ? person.name + " -" : person.name) : (person.name + " - " + person.dob)}</span>
-              <button type="button" onClick={() => void copyGuestDetails(person, isSunInternationalIndexedFile(selected))} title={`نسخ بيانات ${person.name}`} aria-label={`نسخ بيانات ${person.name}`} style={{ flex: "0 0 34px", width: 34, height: 34, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #e45b65", borderRadius: 7, background: "#fff", color: "#d93645", cursor: "pointer" }}>
+              <span>{selected.company.toLocaleLowerCase() === "easy jet" || !person.dob || person.dob === "لم يُعثر عليه" ? person.name : selected.company.toLocaleLowerCase() === "pegas" ? (person.name + " " + person.dob) : (person.name + " - " + person.dob)}</span>
+              <button type="button" onClick={() => void copyGuestDetails(person)} title={`نسخ بيانات ${person.name}`} aria-label={`نسخ بيانات ${person.name}`} style={{ flex: "0 0 34px", width: 34, height: 34, display: "inline-flex", alignItems: "center", justifyContent: "center", border: "1px solid #e45b65", borderRadius: 7, background: "#fff", color: "#d93645", cursor: "pointer" }}>
                 <svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></svg>
               </button>
             </div>
