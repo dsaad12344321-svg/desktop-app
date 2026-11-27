@@ -176,6 +176,36 @@
       ]
     },
     {
+      "id": "funsun",
+      "company": "FUN&SUN",
+      "aliases": [
+        "FUN&SUN",
+        "FUN SUN",
+        "FUN AND SUN",
+        "FUN",
+        "FUN SUN&#x20;",
+        "FUN &SUN",
+        "Hotel2Sejour"
+      ],
+      "parser": "funsun",
+      "signatures": [
+        "FUN\\s*&\\s*SUN",
+        "FUN\\s+SUN",
+        "EX\\s+TUI\\s+RUSSIA",
+        "Passenger\\s+Informations",
+        "Surname,\\s*Name",
+        "Birthdate"
+      ],
+      "bookingIdentifiers": [
+        "numeric PDF filename",
+        "voucher number"
+      ],
+      "guestFields": [
+        "name",
+        "dateOfBirth"
+      ]
+    },
+    {
       "id": "sun",
       "company": "SUN International",
       "aliases": [
