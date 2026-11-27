@@ -1380,7 +1380,7 @@ export default function GuestNameExtractorPage() {
       setAttachmentSearchStatus("");
       setAttachmentPdfSearchTerm("");
     } else {
-      setStorageMessage("تم فتح رسالة MTS، لكن لم يتم العثور على ملف PDF مرفق بها.");
+      setMsgPreviewError("تم فتح رسالة MTS، لكن لم يتم العثور على ملف PDF مرفق بها.");
     }
   }, [autoOpenMtsVoucher, selected, msgPreview]);
   const [currentPage, setCurrentPage] = useState(1);
