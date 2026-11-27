@@ -1502,9 +1502,25 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
 
     if (matchedMessage) {
       file = matchedMessage;
-      const attachedVoucher = (matchedMessage.attachmentPages || []).find(isMtsVoucherAttachment);
-      if (attachedVoucher) {
-        const matchedPage = attachedVoucher.pages.find((page) =>
+
+      // The arrival guest's numeric MSG is the primary booking identity.
+      // Once found, locate the matching page in the separate Guest Voucher
+      // List or in this MSG's embedded PDF to extract all travellers.
+      const matchingVoucherPage = voucherCandidates.map((candidate) => ({
+        ...candidate,
+        matchedPage: candidate.pages.find((page) =>
+          queryIsBookingNumber
+            ? getMtsVoucherReference(page).replace(/-/g, "") === compact
+            : arrivalNameMatchesText(targetName, page),
+        ),
+      })).find((candidate) => Boolean(candidate.matchedPage));
+
+      if (matchingVoucherPage?.matchedPage) {
+        voucherFile = matchingVoucherPage.file;
+        people = extractPeople(matchingVoucherPage.matchedPage, "", matchingVoucherPage.file.company, true, true);
+      } else {
+        const attachedVoucher = (matchedMessage.attachmentPages || []).find(isMtsVoucherAttachment);
+        const matchedPage = attachedVoucher?.pages.find((page) =>
           queryIsBookingNumber
             ? getMtsVoucherReference(page).replace(/-/g, "") === compact
             : arrivalNameMatchesText(targetName, page),
@@ -1514,10 +1530,6 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
           people = extractPeople(matchedPage, "", matchedMessage.company, true, true);
         }
       }
-      // Some MSGs include the voucher data in a PDF attachment whose display
-      // filename is not "Guest Voucher"; the signature-based detection above
-      // still parses it. If no matching attachment page was found, do not
-      // silently switch to a different booking's guest list.
     } else {
       const matchedVoucher = voucherCandidates.map((candidate) => ({
         ...candidate,
