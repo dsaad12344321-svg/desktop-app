@@ -6,7 +6,8 @@ import voucherRules from "./voucher-extraction-rules.json";
 type IndexedFile = {
   id: string; name: string; path: string; company: string; extension: string;
   day?: string; month?: string;
-  size: number; content: string; pages: string[]; visualPages?: string[]; file: File;
+  size: number; content: string; pages: string[]; visualPages?: string[];
+  attachmentPages?: { name: string; pages: string[] }[]; file: File;
 };
 type SearchResult = IndexedFile & { matchedPages: number[] };
 type MsgAttachmentPreview = { name: string; type: string; blob: Blob; url: string; size: number };
