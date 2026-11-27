@@ -946,11 +946,11 @@ function extractPeople(text: string, searchTerm: string, company = "", enableSun
     const passengerStart = clean.search(/\bPassenger\s+Informations\b/i);
     const passengerSection = clean.slice(passengerStart)
       .split(/\b(?:Agency\s+Note|Hotel\s+Notes|Agency\s+Name|Agency\s+User|Sejour\s+Hotel\s+Name)\b/i)[0];
-    const funSunRowPattern = /\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF|ADT)\.?\s+([\p{L}][\p{L}\p{M}'’., -]{1,65}?)\s+-\s+(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b/giu;
+    const funSunRowPattern = /(?:^|\\s)(?:(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF|ADT)\\.?\\s+)?([\\p{L}][\\p{L}\\p{M}'’.-]*(?:\\s+[\\p{L}][\\p{L}\\p{M}'’.-]*){1,3})\\s*(?:-\\s*)?(\\d{1,2}[./-]\\d{1,2}[./-]\\d{4})\\b/giu;
     const funSunPeople = Array.from(passengerSection.matchAll(funSunRowPattern), (match) => ({
-      name: titleCaseName(match[2].replace(/[,]+/g, " ").replace(/\s+/g, " ").trim()),
-      dob: match[3].replace(/[/-]/g, "."),
-    })).filter((person) => person.name && !/^(?:surname name|name age|age)$/i.test(person.name));
+      name: titleCaseName(match[1].replace(/[,]+/g, " ").replace(/\\s+/g, " ").trim()),
+      dob: match[2].replace(/[/-]/g, "."),
+    })).filter((person) => person.name && !/^(?:passenger informations|surname name|name age|age)$/i.test(person.name));
 
     if (funSunPeople.length) {
       const normalizedSearch = normalize(searchTerm);
@@ -1271,11 +1271,14 @@ function isFunSunIndexedFile(file: Pick<IndexedFile, "company" | "content" | "pa
 
 function getFunSunFilePriority(file: Pick<IndexedFile, "name" | "extension">) {
   if (file.extension.toLowerCase() !== "pdf") return 5;
-  const base = file.name.replace(/\.pdf$/i, "").trim();
-  if (/^\d+[+-]?amend$/i.test(base)) return 0;
-  if (/^\d{5,12}$/.test(base)) return 1;
-  if (/^\d{5,12}(?:[,_\s-].+|[+-].+)$/i.test(base)) return 2;
-  if (/^reservations\s*\(\s*\d+\s*\)$/i.test(base) || /^download$/i.test(base) || /^hotel2sejour$/i.test(base)) return 3;
+  const base = file.name.replace(/\\.pdf$/i, "").trim();
+  // Accept AMEND / AMMEND, optional dot/space, and + or - before the suffix.
+  if (/^\\d+[\\s._+-]*am+end$/i.test(base)) return 0;
+  if (/^\\d{5,12}$/.test(base)) return 1;
+  if (/^\\d{5,12}(?:[,_\\s-].+|[+-].+)$/i.test(base)) return 2;
+  if (/^reservations\\s*\\(\\s*\\d+\\s*\\)$/i.test(base)
+    || /^download$/i.test(base)
+    || /^hotel2sejour$/i.test(base)) return 3;
   return 4;
 }
 
