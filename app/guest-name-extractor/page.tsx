@@ -143,7 +143,8 @@ function detectVoucherCompany(text: string, currentCompany = "") {
       && /\bVoucher\b/i.test(text)
       && /\bSurname,\s*Name\b/i.test(text)
       && /\bAge\/B\.Date\b/i.test(text))
-    || (/surname\s*,?\s*name/i.test(text)
+    || (/passenger\s+informations/i.test(text)
+      && /surname\s*,?\s*name/i.test(text)
       && /\bbirthdate\b/i.test(text)
       && /\btitle\b/i.test(text)
       && /\bage\b/i.test(text))) return "SUN International";
@@ -1057,7 +1058,8 @@ function isSunInternationalIndexedFile(file: SunIndexedFile | null | undefined) 
   const isFunSun = /^fun\s*&?\s*sun$/i.test(company)
     || /FUN\s*&\s*SUN|FUN\s+SUN|EX\s+TUI\s+RUSSIA/i.test(searchable);
   if (isFunSun) return false;
-  const hasPassengerTable = /surname\s*,?\s*name/i.test(searchable)
+  const hasPassengerTable = /passenger\s+informations/i.test(searchable)
+    && /surname\s*,?\s*name/i.test(searchable)
     && /\bbirthdate\b/i.test(searchable)
     && /\btitle\b/i.test(searchable)
     && /\bage\b/i.test(searchable);
