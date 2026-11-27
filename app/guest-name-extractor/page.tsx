@@ -146,11 +146,10 @@ function detectVoucherCompany(text: string, currentCompany = "") {
     || (/\bBooking\s+Code\b/i.test(text)
       && /\bPassenger\s+Name\b/i.test(text)
       && /\bPassenger\s+Last\s+Name\b/i.test(text))) return "W2M";
-  if (currentCompany.trim() && currentCompany.trim() !== "غير محددة") return currentCompany.trim();
-  // FUN&SUN is a separate supplier format and must not be reclassified.
-  if (/FUN\s*&\s*SUN|FUN\s+SUN|EX\s+TUI\s+RUSSIA/i.test(text)) {
-    return currentCompany || "غير محددة";
+  if (/FUN\s*&\s*SUN|FUN\s+SUN|FUN\s+AND\s+SUN|EX\s+TUI\s+RUSSIA/i.test(text) || isFunSunAlias(currentCompany)) {
+    return currentCompany && currentCompany !== "غير محددة" ? currentCompany : "FUN&SUN";
   }
+  if (currentCompany.trim() && currentCompany.trim() !== "غير محددة") return currentCompany.trim();
   // SUN can be identified from its own branding or its distinctive passenger
   // table, even when the PDF omits the company heading.
   if (/\bSUN\s+INTERNATIONAL\b|\bSUNBUG\b/i.test(text)
@@ -1245,8 +1244,8 @@ function isSunInternationalIndexedFile(file: SunIndexedFile | null | undefined) 
   if (!file) return false;
   const company = normalize(file.company);
   const searchable = [file.name, file.path, file.content, ...file.pages, ...(file.visualPages || [])].join(" ");
-  const isFunSun = /^fun\s*&?\s*sun$/i.test(company)
-    || /FUN\s*&\s*SUN|FUN\s+SUN|EX\s+TUI\s+RUSSIA/i.test(searchable);
+  const isFunSun = isFunSunAlias(file.company)
+    || /FUN\s*&\s*SUN|FUN\s+SUN|FUN\s+AND\s+SUN|EX\s+TUI\s+RUSSIA/i.test(searchable);
   if (isFunSun) return false;
   const hasPassengerTable = /passenger\s+informations/i.test(searchable)
     && /surname\s*,?\s*name/i.test(searchable)
