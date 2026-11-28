@@ -4,6 +4,8 @@ declare global {
   interface Window {
     desktopBridge?: {
       getSavedFolderPath: () => Promise<string>;
+      getSavedRCExtractorFolderPath: () => Promise<string>;
+      saveRCExtractorFolderPath: (rootPath: string) => Promise<boolean>;
       saveFolderPath: (rootPath: string) => Promise<boolean>;
       clearSavedFolderPath: () => Promise<boolean>;
       getAppInfo: () => Promise<{
