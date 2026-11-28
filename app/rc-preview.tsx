@@ -107,6 +107,15 @@ export default function RCPreview() {
     const wanted = new Set(requestedRooms);
     return inhGuests.filter((guest) => wanted.has(guest.room));
   }, [inhGuests, requestedRooms]);
+  const visibleRoomGroups = useMemo(() => {
+    const groups = new Map<string, InhGuest[]>();
+    for (const guest of visibleGuests) {
+      const group = groups.get(guest.room) || [];
+      group.push(guest);
+      groups.set(guest.room, group);
+    }
+    return [...groups.entries()].map(([room, guests]) => ({ room, guests }));
+  }, [visibleGuests]);
 
   async function uploadInh(file?: File) {
     if (!file) return;
@@ -275,21 +284,25 @@ export default function RCPreview() {
       {message && <div className="notice" role="status">{message}</div>}
       {visibleGuests.length > 0 && (
         <div className="towel-results">
-          <h3>بيانات الغرف من INH ({visibleGuests.length})</h3>
+          <h3>بيانات الغرف من INH ({visibleRoomGroups.length})</h3>
           <div className="folder-results" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 12 }}>
-            {visibleGuests.map((guest, index) => (
-              <article key={guest.room + "-" + index} className="folder-result" style={{ border: "1px solid #d5e3d8", borderRadius: 12, padding: 14, background: "#f7fbf8" }}>
+            {visibleRoomGroups.map((group) => (
+              <article key={group.room} className="folder-result" style={{ border: "1px solid #d5e3d8", borderRadius: 12, padding: 14, background: "#f7fbf8" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 10 }}>
-                  <strong style={{ fontSize: 18 }}>غرفة {guest.room}</strong>
+                  <strong style={{ fontSize: 18 }}>غرفة {group.room}</strong>
                   <span style={{ color: "#16803d", fontWeight: 800 }}>INH</span>
                 </div>
-                <div style={{ color: "#16803d", fontWeight: 800, fontSize: 17, marginBottom: 10 }}>{guest.name}</div>
-                <div style={{ display: "grid", gap: 6, fontSize: 14 }}>
-                  <div><strong>رقم الغرفة:</strong> {guest.room}</div>
-                  <div><strong>الشركة:</strong> {guest.company || "غير محددة"}</div>
-                  <div><strong>تاريخ الوصول:</strong> {guest.arrival}</div>
-                  <div><strong>تاريخ المغادرة:</strong> {guest.departure}</div>
-                </div>
+                {group.guests.map((guest, index) => (
+                  <div key={group.room + "-" + index} style={{ borderTop: index ? "1px solid #d5e3d8" : "none", paddingTop: index ? 10 : 0, marginTop: index ? 10 : 0 }}>
+                    <div style={{ color: "#16803d", fontWeight: 800, fontSize: 17, marginBottom: 10 }}>{guest.name}</div>
+                    <div style={{ display: "grid", gap: 6, fontSize: 14 }}>
+                      <div><strong>رقم الغرفة:</strong> {guest.room}</div>
+                      <div><strong>الشركة:</strong> {guest.company || "غير محددة"}</div>
+                      <div><strong>تاريخ الوصول:</strong> {guest.arrival}</div>
+                      <div><strong>تاريخ المغادرة:</strong> {guest.departure}</div>
+                    </div>
+                  </div>
+                ))}
               </article>
             ))}
           </div>
