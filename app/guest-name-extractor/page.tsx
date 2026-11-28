@@ -2037,7 +2037,7 @@ export default function GuestNameExtractorPage() {
       return (left.arrival?.roomNo || "").localeCompare(right.arrival?.roomNo || "", undefined, { numeric: true });
     }
     return 0;
-  }), [multipleCardsData, multipleSort, arrivalCompanyFilter, arrivalCompanies]);
+  }), [multipleCardsData, multipleSort, arrivalCompanyFilter, arrivalCompanies, files]);
 
   async function runMultipleSearch() {
     const searchText = multipleDraftQuery.trim();
