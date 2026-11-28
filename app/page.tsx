@@ -743,7 +743,8 @@ export default function Home() {
         </select>
       </section>
 
-      {activeTool === "guest-name-extractor" ? <GuestNameExtractorPage /> : activeTool === "nationality" ? (
+      <div style={{ display: activeTool === "guest-name-extractor" ? "block" : "none" }}><GuestNameExtractorPage /></div>
+      {activeTool === "guest-name-extractor" ? null : activeTool === "nationality" ? (
         <>
       <section className="panel">
         <h2>إدارة البيانات والإعدادات</h2>
