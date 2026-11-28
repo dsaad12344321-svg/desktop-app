@@ -137,7 +137,7 @@ function canonicalizeArrivalCompany(value: string) {
   if (/^easy\s*jet(?:\s+tours?)?\b/.test(cleaned)) return "Easy Jet";
   if (/^house\s+use\b/.test(cleaned)) return "House use";
   if (/^l\s+tur\b/.test(cleaned)) return "L tur";
-  if (/^tui(?:\\s+destimo)?\\b/.test(cleaned)) return "TUI";
+  if (/^tui(?:\s+destimo)?\b/.test(cleaned)) return "TUI";
   if (/biblio|biblo/.test(cleaned)) return "biblio";
   if (/anex/.test(cleaned)) return "Anex";
   if (/(^|\s)mts(\s|$)/.test(cleaned)) return "MTS";
