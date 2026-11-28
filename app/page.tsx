@@ -2,7 +2,7 @@
 
 import { useEffect, useState, type ChangeEvent } from "react";
 import GuestNameExtractorPage from "./guest-name-extractor/page";
-import RCDataExtractor from "./rc-data-extractor";
+import RCPreview from "./rc-preview";
 import { useFileLibrary } from "./file-library-provider";
 
 type Exclusion = { id: number; code: string; count: number };
@@ -28,7 +28,7 @@ export default function Home() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [kind, setKind] = useState<"error" | "success" | "info">("info");
-  const [activeTool, setActiveTool] = useState<"nationality" | "towels" | "nationality-missing" | "missing-profile" | "manager-report" | "journal" | "rc-missing" | "guest-name-extractor">("nationality");
+  const [activeTool, setActiveTool] = useState<string>("nationality");
   const [managerTowelFile, setManagerTowelFile] = useState<File | null>(null);
   const [managerInhFile, setManagerInhFile] = useState<File | null>(null);
   const [managerNationalityFile, setManagerNationalityFile] = useState<File | null>(null);
@@ -122,9 +122,9 @@ export default function Home() {
     } catch { /* تجاهل الإضافات اليدوية غير الصالحة */ }
     try {
       const savedTool = localStorage.getItem(ACTIVE_TOOL_STORAGE_KEY);
-      const validTools = ["nationality", "towels", "nationality-missing", "missing-profile", "manager-report", "journal", "rc-missing", "guest-name-extractor"];
+      const validTools = ["nationality", "towels", "nationality-missing", "missing-profile", "manager-report", "journal", "rc-missing", "rc-preview", "guest-name-extractor"];
       if (savedTool && validTools.includes(savedTool)) {
-        setActiveTool(savedTool as "nationality" | "towels" | "nationality-missing" | "missing-profile" | "manager-report" | "journal" | "rc-missing" | "guest-name-extractor");
+        setActiveTool(savedTool);
       }
     } catch { /* تجاهل تعذر استعادة الأداة النشطة */ }
     setReady(true);
@@ -712,8 +712,8 @@ export default function Home() {
     <main className="page">
       <header className="hero">
         <p className="eyebrow">أداة التقارير الفندقية</p>
-        <h1>{activeTool === "nationality" ? "التقرير اليومي للجنسيات" : activeTool === "towels" ? "Missing Towel Detector" : activeTool === "nationality-missing" ? "Nationality missing detector" : activeTool === "missing-profile" ? "Missing Profile Detector" : activeTool === "manager-report" ? "Manager Report" : activeTool === "guest-name-extractor" ? "Guest Name Extractor" : activeTool === "rc-missing" ? "RC Missing" : "Journal Detector"}</h1>
-        <p>{activeTool === "nationality" ? "حوّل ملفات nat.xml وman.xml إلى تقرير Excel، ويمكن إضافة Guests INH - By Room لإنشاء تبويب تفاصيل الغرف." : activeTool === "towels" ? "ارفع تقرير الغرف لاستخراج أرقام الغرف التي لا تحتوي على Towel Card." : activeTool === "nationality-missing" ? "ارفع Guest INH By Nationality لاستخراج أرقام الغرف التي لا تحتوي على كود جنسية." : activeTool === "missing-profile" ? "قارن عدد Adults + Children بعدد الأسماء المسجلة في Main Profile وAccompanying Names." : activeTool === "manager-report" ? "تقرير موحد للغرف التي بها نقص في كروت الفوط أو الجنسية أو ملفات النزلاء." : activeTool === "guest-name-extractor" ? "اختر مجلد الحجوزات للبحث داخل ملفات PDF وWord وOutlook عن اسم النزيل أو الشركة." : activeTool === "rc-missing" ? "قارن غرف تقرير RES_DETAIL مع أرقام الغرف الموجودة في أسماء ملفات PDF داخل ملف ZIP، واعرض الغرف التي لا يوجد لها PDF." : "ارفع Journal by Cashier and Transaction Code لاستخراج الحركات، أو RES_DETAIL لاستخراج غرف الوصول التي لديها 1012 Fixed Charges."}</p>
+        <h1>{activeTool === "nationality" ? "التقرير اليومي للجنسيات" : activeTool === "towels" ? "Missing Towel Detector" : activeTool === "nationality-missing" ? "Nationality missing detector" : activeTool === "missing-profile" ? "Missing Profile Detector" : activeTool === "manager-report" ? "Manager Report" : activeTool === "guest-name-extractor" ? "Guest Name Extractor" : activeTool === "rc-missing" ? "RC Missing" : activeTool === "rc-preview" ? "RC Preview" : "Journal Detector"}</h1>
+        <p>{activeTool === "nationality" ? "حوّل ملفات nat.xml وman.xml إلى تقرير Excel، ويمكن إضافة Guests INH - By Room لإنشاء تبويب تفاصيل الغرف." : activeTool === "towels" ? "ارفع تقرير الغرف لاستخراج أرقام الغرف التي لا تحتوي على Towel Card." : activeTool === "nationality-missing" ? "ارفع Guest INH By Nationality لاستخراج أرقام الغرف التي لا تحتوي على كود جنسية." : activeTool === "missing-profile" ? "قارن عدد Adults + Children بعدد الأسماء المسجلة في Main Profile وAccompanying Names." : activeTool === "manager-report" ? "تقرير موحد للغرف التي بها نقص في كروت الفوط أو الجنسية أو ملفات النزلاء." : activeTool === "guest-name-extractor" ? "اختر مجلد الحجوزات للبحث داخل ملفات PDF وWord وOutlook عن اسم النزيل أو الشركة." : activeTool === "rc-missing" ? "قارن غرف تقرير RES_DETAIL مع أرقام الغرف الموجودة في أسماء ملفات PDF، واعرض الغرف التي لا يوجد لها PDF." : activeTool === "rc-preview" ? "ابحث عن بطاقات التسجيل حسب أرقام الغرف، واعرض صفحات PDF واطبع الصفحة المطلوبة دون تقارير وصول." : "ارفع Journal by Cashier and Transaction Code لاستخراج الحركات، أو RES_DETAIL لاستخراج غرف الوصول التي لديها 1012 Fixed Charges."}</p>
       </header>
 
       <section className="panel" aria-live="polite" style={{ padding: "12px 16px", marginBottom: 16 }}>
@@ -730,7 +730,7 @@ export default function Home() {
       <section className="panel tool-picker">
         <label htmlFor="tool-select">اختر الأداة</label>
         <select id="tool-select" value={activeTool} onChange={(e) => {
-          setActiveTool(e.target.value as "nationality" | "towels" | "nationality-missing" | "missing-profile" | "manager-report" | "journal" | "rc-missing" | "guest-name-extractor");
+          setActiveTool(e.target.value);
         }}>
           <option value="nationality">التقرير اليومي للجنسيات</option>
           <option value="towels">Missing Towel Detector</option>
@@ -738,13 +738,13 @@ export default function Home() {
           <option value="missing-profile">Missing Profile Detector</option>
           <option value="manager-report">Manager Report</option>
           <option value="journal">Journal Detector</option>
-          <option value="rc-missing">RC Missing</option>
+          <option value="rc-missing">RC Missing</option>\n          <option value="rc-preview">RC Preview</option>
           <option value="guest-name-extractor">فتح Guest Name Extractor</option>
         </select>
       </section>
 
       <div style={{ display: activeTool === "guest-name-extractor" ? "block" : "none" }}><GuestNameExtractorPage /></div>
-      {activeTool === "guest-name-extractor" ? null : activeTool === "nationality" ? (
+      {activeTool === "guest-name-extractor" ? null : activeTool === "rc-preview" ? (\n        <RCPreview />\n      ) : activeTool === "nationality" ? (
         <>
       <section className="panel">
         <h2>إدارة البيانات والإعدادات</h2>
