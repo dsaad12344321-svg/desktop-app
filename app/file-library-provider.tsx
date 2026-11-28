@@ -9,6 +9,7 @@ export type SharedFolderEntry = {
   name: string;
   size: number;
   mtimeMs: number;
+  rootPath?: string;
 };
 
 type FolderState = {
@@ -55,7 +56,8 @@ export function FileLibraryProvider({ children }: { children: ReactNode }) {
         updateFolder(kind, () => ({ ...emptyFolder, loaded: true }));
         return [];
       }
-      const entries = await window.desktopBridge.listFolderFiles(rootPath);
+      const listedEntries = await window.desktopBridge.listFolderFiles(rootPath);
+      const entries = listedEntries.map(entry => ({ ...entry, rootPath }));
       const liveKeys = new Set(entries.map(entry => entry.path + "|" + entry.size + "|" + entry.mtimeMs));
       for (const key of byteCache.current.keys()) {
         if (key.startsWith(kind + "|") && !liveKeys.has(key.slice(kind.length + 1))) byteCache.current.delete(key);
@@ -80,7 +82,7 @@ export function FileLibraryProvider({ children }: { children: ReactNode }) {
 
   const readBytes = useCallback(async (kind: SharedFolderKind, entry: SharedFolderEntry) => {
     const folder = kind === "reservations" ? reservations : registrations;
-    const rootPath = folder.path;
+    const rootPath = entry.rootPath || folder.path;
     if (!rootPath || !window.desktopBridge) throw new Error("المجلد غير متاح حاليًا.");
     const key = kind + "|" + entry.path + "|" + entry.size + "|" + entry.mtimeMs;
     const cached = byteCache.current.get(key);
