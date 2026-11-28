@@ -12,16 +12,16 @@ type InhGuest = {
 };
 
 function normalizeRoom(value: string) {
-  const digits = value.replace(/\\D/g, "");
+  const digits = value.replace(/\D/g, "");
   return digits.length === 3 || digits.length === 4 ? digits.padStart(4, "0") : "";
 }
 
 function parseRoomQuery(query: string): string[] {
   const rooms = new Set<string>();
-  const parts = query.replace(/(\\d{3,4})\\s*[-–—]\\s*(\\d{3,4})/g, "$1-$2")
-    .split(/[,،;\\s]+/).map((part) => part.trim()).filter(Boolean);
+  const parts = query.replace(/(\d{3,4})\s*[-–—]\s*(\d{3,4})/g, "$1-$2")
+    .split(/[,،;\s]+/).map((part) => part.trim()).filter(Boolean);
   for (const part of parts) {
-    const range = part.match(/^(\\d{3,4})-(\\d{3,4})$/);
+    const range = part.match(/^(\d{3,4})-(\d{3,4})$/);
     if (range) {
       const start = Number(normalizeRoom(range[1]));
       const end = Number(normalizeRoom(range[2]));
@@ -38,7 +38,7 @@ function parseRoomQuery(query: string): string[] {
 }
 
 function roomsInFilename(name: string) {
-  return (name.match(/(?<!\\d)\\d{3,4}(?!\\d)/g) || []).map((room) => room.padStart(4, "0"));
+  return (name.match(/(?<!\d)\d{3,4}(?!\d)/g) || []).map((room) => room.padStart(4, "0"));
 }
 
 async function parseInhPdf(file: File): Promise<InhGuest[]> {
@@ -47,7 +47,7 @@ async function parseInhPdf(file: File): Promise<InhGuest[]> {
   const bytes = new Uint8Array(await file.arrayBuffer());
   const pdf = await pdfjs.getDocument({ data: bytes }).promise;
   const guests: InhGuest[] = [];
-  const datePattern = /^\\d{2}-\\d{2}-\\d{2}$/;
+  const datePattern = /^\d{2}-\d{2}-\d{2}$/;
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
     const page = await pdf.getPage(pageNumber);
@@ -68,12 +68,12 @@ async function parseInhPdf(file: File): Promise<InhGuest[]> {
 
     for (const row of rows) {
       const items = row.items.sort((a, b) => a.x - b.x);
-      const roomItem = items.find((item) => item.x < 42 && /^\\d{4}$/.test(item.text));
+      const roomItem = items.find((item) => item.x < 42 && /^\d{4}$/.test(item.text));
       if (!roomItem) continue;
       const dates = items.map((item) => item.text).filter((value) => datePattern.test(value));
       if (dates.length < 2) continue;
-      const name = items.filter((item) => item.x >= 40 && item.x < 160).map((item) => item.text).join(" ").replace(/\\s+/g, " ").trim();
-      const company = items.filter((item) => item.x >= 160 && item.x < 315).map((item) => item.text).join(" ").replace(/\\s+/g, " ").trim();
+      const name = items.filter((item) => item.x >= 40 && item.x < 160).map((item) => item.text).join(" ").replace(/\s+/g, " ").trim();
+      const company = items.filter((item) => item.x >= 160 && item.x < 315).map((item) => item.text).join(" ").replace(/\s+/g, " ").trim();
       if (!name) continue;
       guests.push({ room: roomItem.text, name, company, arrival: dates[0], departure: dates[1] });
     }
