@@ -705,6 +705,77 @@ function extractTravelWaysPeople(text: string, searchTerm: string) {
   return matchingGroups.flatMap((group) => group.people);
 }
 
+function isPlanetIndexedFile(file: Pick<IndexedFile, "company" | "name" | "path" | "content" | "pages" | "attachmentPages"> | null | undefined) {
+  if (!file) return false;
+  const company = normalize(file.company);
+  const searchable = [file.name, file.path, file.content, ...file.pages,
+    ...(file.attachmentPages || []).flatMap((attachment) => [attachment.name, ...attachment.pages])].join(" ");
+  return company === "planet" || /\bplanet\s+tours?\b/i.test(searchable)
+    || (/\bHOTEL\s+(?:RESERVATION\s+FORM|C\/IN\s+LIST)\b/i.test(searchable)
+      && /\b(?:RAINBOW|RAIN)\s+\d{5,10}\s+\d+\s+(?:MR|MRS|MS|MISS|CHD)\b/i.test(searchable));
+}
+
+function extractPlanetPeople(pages: string[], searchTerm: string) {
+  type PlanetBooking = { voucher: string; people: MultipleGuest[] };
+  const groups: PlanetBooking[] = [];
+  const byVoucher = new Map<string, PlanetBooking>();
+  let current: PlanetBooking | null = null;
+
+  const addGuest = (raw: string, group: PlanetBooking) => {
+    const guest = raw.match(/\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF)\.?\s+(.+?)(?=\s+\d{1,2}[./-]\d{1,2}[./-]\d{4}\b|\s+(?:ARR\b|ENT\d|SINGLE\s+ROOM|DOUBLE\s+ROOM|TRIPLE\s+ROOM|QUAD\s+ROOM)\b|$)/i);
+    if (!guest) return;
+    const name = guest[2].replace(/\s+/g, " ").replace(/[,.]+$/, "").trim();
+    if (!name || /^(?:SURNAME,? NAME|TOTAL PAX|TOTAL ROOM)$/i.test(name)) return;
+    const dob = raw.match(/\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b/)?.[1] || "";
+    const person = { name: titleCaseName(name), dob: dob.replace(/[/-]/g, ".") };
+    if (!group.people.some((item) => normalize(item.name) === normalize(person.name) && item.dob === person.dob)) {
+      group.people.push(person);
+    }
+  };
+
+  for (const rawLine of pages.join("\n").split(/\r?\n/)) {
+    const line = rawLine.replace(/\s+/g, " ").trim();
+    if (!line) continue;
+    const start = line.match(/^.{0,35}?\b(\d{5,10})\s+\d+\s+((?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF)\.?\s+.+)$/i);
+    if (start) {
+      const voucher = start[1];
+      current = byVoucher.get(voucher) || { voucher, people: [] };
+      if (!byVoucher.has(voucher)) {
+        byVoucher.set(voucher, current);
+        groups.push(current);
+      }
+      addGuest(start[2], current);
+      continue;
+    }
+    if (/^(?:NOTE:|TOTAL\s+PAX\b|TOTAL\s+ROOM\b|LONG\s+BEACH\s+HOTEL\s+TOTALS?)/i.test(line)) {
+      current = null;
+      continue;
+    }
+    if (current && /^(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF)\.?\s+/i.test(line)) {
+      addGuest(line, current);
+    }
+  }
+
+  const query = normalize(searchTerm);
+  if (!query) return groups.flatMap((group) => group.people);
+  const compactQuery = query.replace(/\s+/g, "");
+  if (/^\d{5,10}$/.test(compactQuery)) {
+    const exact = groups.find((group) => group.voucher === compactQuery);
+    if (exact) return exact.people;
+  }
+  const queryTokens = query.split(/\s+/).filter((token) =>
+    token.length >= 3 && !/^(?:mr|mrs|ms|miss|mstr|master|chd|child|inf|adult|adt)$/i.test(token),
+  );
+  const matchingGroups = groups.filter((group) => {
+    const nameTokens = normalize(group.people.map((person) => person.name).join(" ")).split(/\s+/);
+    if (!queryTokens.length) return false;
+    return queryTokens.length === 1
+      ? nameTokens.includes(queryTokens[0])
+      : queryTokens.every((token) => nameTokens.includes(token));
+  });
+  return matchingGroups.flatMap((group) => group.people);
+}
+
 function extractPeople(text: string, searchTerm: string, company = "", enableSunCheckInList = false, preserveDuplicateNames = false) {
   company = detectVoucherCompany(text, company);
 
@@ -1361,6 +1432,12 @@ function extractPeopleForMultipleView(
   const isMsg = file.extension.toLowerCase() === "msg";
   const isSun = isSunInternationalIndexedFile(file);
   const isMts = isMtsIndexedFile(file);
+  if (isPlanetIndexedFile(file)) {
+    const sourcePages = isMsg
+      ? (file.attachmentPages || []).filter((attachment) => /\.pdf$/i.test(attachment.name)).flatMap((attachment) => attachment.pages)
+      : (file.visualPages?.length ? file.visualPages : file.pages);
+    return extractPlanetPeople(sourcePages, searchTerm);
+  }
 
   // W2M sends the authoritative guest list in the Outlook email body under
   // "Passengers:". Parse that body directly before generic supplier logic;
@@ -1491,6 +1568,12 @@ function extractPeopleFromIndexedFile(
   enableSunCheckInList = false,
 ) {
   const isMsg = file.extension.toLowerCase() === "msg";
+  if (isPlanetIndexedFile(file)) {
+    const sourcePages = isMsg
+      ? (file.attachmentPages || []).filter((attachment) => /\.pdf$/i.test(attachment.name)).flatMap((attachment) => attachment.pages)
+      : file.pages;
+    return extractPlanetPeople(sourcePages, searchTerm);
+  }
   if (isMtsIndexedFile(file)) {
     const voucherPages = isMsg
       ? (file.attachmentPages || []).filter(isMtsVoucherAttachment).flatMap((attachment) => attachment.pages)
