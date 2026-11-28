@@ -3,6 +3,8 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("desktopBridge", Object.freeze({
   getAppInfo: () => ipcRenderer.invoke("desktop:get-app-info"),
   getSavedFolderPath: () => ipcRenderer.invoke("desktop:get-saved-folder-path"),
+  getSavedRCExtractorFolderPath: () => ipcRenderer.invoke("desktop:get-saved-rc-extractor-folder-path"),
+  saveRCExtractorFolderPath: (rootPath) => ipcRenderer.invoke("desktop:save-rc-extractor-folder-path", rootPath),
   saveFolderPath: (rootPath) => ipcRenderer.invoke("desktop:save-folder-path", rootPath),
   clearSavedFolderPath: () => ipcRenderer.invoke("desktop:clear-saved-folder-path"),
   selectFiles: (extensions) => ipcRenderer.invoke("desktop:select-files", { extensions }),
