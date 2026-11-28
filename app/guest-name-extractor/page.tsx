@@ -759,7 +759,7 @@ function extractPlanetPeople(pages: string[], searchTerm: string) {
     if (current && /^(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF)\.?\s+/i.test(line)) {
       lastPerson = addGuest(line, current);
     } else if (current && lastPerson && line.length >= 4
-      && /^[\\p{L}][\\p{L}'’.-]{2,40}$/u.test(line)
+      && /^[\p{L}][\p{L}'’.-]{2,40}$/u.test(line)
       && line === line.toLocaleUpperCase()) {
       // Some Planet PDFs wrap a long surname onto its own visual line.
       lastPerson.name = titleCaseName(lastPerson.name + " " + line);
