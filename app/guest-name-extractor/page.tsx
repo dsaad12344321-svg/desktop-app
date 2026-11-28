@@ -135,6 +135,7 @@ function canonicalizeArrivalCompany(value: string) {
   // the supplier name. Resolve known multi-word suppliers before stripping
   // that metadata so all rows group under one canonical company.
   if (/^easy\s*jet(?:\s+tours?)?\b/.test(cleaned)) return "Easy Jet";
+  if (/^planet(?:\s+tours?)?\b/.test(cleaned)) return "Planet";
   if (/^house\s+use\b/.test(cleaned)) return "House use";
   if (/^l\s+tur\b/.test(cleaned)) return "L tur";
   if (/^tui(?:\s+destimo)?\b/.test(cleaned)) return "TUI";
@@ -160,6 +161,7 @@ function normalizeCompanyKey(value: string) {
 function getMultipleCompanyQuery(value: string) {
   const key = normalize(value).replace(/\s+/g, "");
   const aliases: Record<string, string> = {
+    planet: "Planet", planettours: "Planet",
     w2m: "W2M", world2meet: "W2M",
     tui: "TUI", tuidestimo: "TUI",
     ltur: "L tur",
