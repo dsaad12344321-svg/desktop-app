@@ -13,6 +13,9 @@ function clean(value: string) {
 function roomTokens(value: string) {
   return (value.match(/(?<!\d)\d{3,4}(?!\d)/g) || []).map((v) => v.padStart(4, "0"));
 }
+function requestedRoomTokens(value: string) {
+  return value.split(/[,،;\s]+/).map((part) => part.replace(/\D/g, "")).filter((part) => part.length === 3 || part.length === 4).map((part) => part.padStart(4, "0"));
+}
 function nameBigrams(value: string) {
   const words = clean(value).split(" ").filter((v) => v.length >= 2);
   return new Set(words.flatMap((word) => Array.from({ length: word.length - 1 }, (_, i) => word.slice(i, i + 2))));
@@ -154,8 +157,17 @@ export default function RCDataExtractor() {
   const matchedCount = rows.filter((row) => row.status === "matched").length;
   const reviewCount = rows.filter((row) => row.status === "review").length;
 
-  async function runExtraction() {
-    setBusy(true); setMessage("جارٍ قراءة تقرير الوصول ونماذج التسجيل..."); setRows([]);
+  async function runExtraction(searchQuery = searchedRoom) {
+    const requestedRooms = requestedRoomTokens(searchQuery);
+    const isRoomSearch = requestedRooms.length > 0;
+    const filesToProcess = isRoomSearch
+      ? pdfEntries.filter((entry) => roomTokens(entry.name).some((room) => requestedRooms.includes(room)))
+      : searchQuery.trim()
+        ? pdfEntries.filter((entry) => clean(entry.name).includes(clean(searchQuery)))
+        : pdfEntries;
+    setBusy(true);
+    setMessage(isRoomSearch ? `جارٍ البحث عن الغرف: ${requestedRooms.join("، ")}...` : searchQuery.trim() ? "جارٍ البحث في أسماء ملفات PDF..." : "جارٍ قراءة تقرير الوصول ونماذج التسجيل...");
+    setRows([]);
     try {
       let arrivalGuests: ArrivalGuest[] = [];
       const linkedArrivals = [
@@ -177,12 +189,17 @@ export default function RCDataExtractor() {
       if (!arrivalGuests.length) throw new Error("لم أجد سجلات وصول قابلة للقراءة. تأكد من وجود arr.pdf أو arr.xml داخل المجلد المرتبط أو اختر التقرير يدويًا.");
       const selected: Array<{ name: string; data: Uint8Array }> = [];
       if (window.desktopBridge && rcFolderPath) {
-        for (const entry of pdfEntries) {
+        for (const entry of filesToProcess) {
           const bytes = await readBytes("registration", entry);
           selected.push({ name: entry.relativePath || entry.name, data: new Uint8Array(bytes) });
         }
       }
-      if (!selected.length) throw new Error("لم يتم العثور على ملفات PDF داخل مجلد النماذج المحفوظ. اختر مجلدًا يحتوي على نماذج التسجيل.");
+      if (!selected.length) {
+        if (searchQuery.trim()) throw new Error(isRoomSearch
+          ? `لم أجد ملف PDF يحتوي اسمه على أرقام الغرف المطلوبة: ${requestedRooms.join("، ")}. تأكد من كتابة الأرقام مفصولة بفاصلة.`
+          : "لم أجد ملف PDF يطابق الاسم الذي أدخلته.");
+        throw new Error("لم يتم العثور على ملفات PDF داخل مجلد النماذج المحفوظ. اختر مجلدًا يحتوي على نماذج التسجيل.");
+      }
       const output: ExtractedRow[] = [];
       for (const file of selected) {
         if (/^arr\.pdf$/i.test(file.name)) continue;
@@ -191,8 +208,8 @@ export default function RCDataExtractor() {
         const room = extractCardRoom(text);
         const filenameRooms = roomTokens(file.name);
         const roomCandidates = arrivalGuests.filter((guest) => {
-          const arrivalRoom = String(guest.room || "").replace(/\\D/g, "").padStart(4, "0");
-          const cardRoom = String(room || "").replace(/\\D/g, "").padStart(4, "0");
+          const arrivalRoom = String(guest.room || "").replace(/\D/g, "").padStart(4, "0");
+          const cardRoom = String(room || "").replace(/\D/g, "").padStart(4, "0");
           return (cardRoom && arrivalRoom && (cardRoom === arrivalRoom || cardRoom.includes(arrivalRoom.slice(-2)) || arrivalRoom.includes(cardRoom.slice(-2)))) ||
             filenameRooms.some((token) => token === arrivalRoom || token.includes(arrivalRoom.slice(-2)) || arrivalRoom.includes(token.slice(-2)));
         });
@@ -214,7 +231,7 @@ export default function RCDataExtractor() {
         output.push({ file: file.name, room: room || filenameRooms[0] || "", name, phone, email, arrivalName: candidate?.name || bestName?.guest.name || "", arrivalRoom: candidate?.room || roomCandidates[0]?.room || "", status, reason });
       }
       setRows(output);
-      setMessage(`اكتمل الفحص: ${output.length} نموذج، ${output.filter((row) => row.status === "matched").length} مطابق، ${output.filter((row) => row.status === "review").length} يحتاج مراجعة.`);
+      setMessage(`اكتمل البحث والفحص: ${output.length} ملف PDF للغرف المحددة، ${output.filter((row) => row.status === "matched").length} مطابق، ${output.filter((row) => row.status === "review").length} يحتاج مراجعة.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "حدث خطأ أثناء استخراج بيانات النماذج.");
     } finally { setBusy(false); }
@@ -229,17 +246,7 @@ export default function RCDataExtractor() {
   }
 
   const statusFilteredRows = showAll ? rows : rows.filter((row) => row.status !== "matched");
-  const normalizedSearch = clean(searchedRoom);
-  const normalizedSearchDigits = searchedRoom.replace(/\D/g, "");
-  const visibleRows = normalizedSearch
-    ? statusFilteredRows.filter((row) => {
-        const roomMatches = Boolean(normalizedSearchDigits) && [row.room, row.arrivalRoom]
-          .some((room) => String(room || "").replace(/\D/g, "").includes(normalizedSearchDigits));
-        const nameMatches = [row.name, row.arrivalName, row.file]
-          .some((value) => clean(String(value || "")).includes(normalizedSearch));
-        return roomMatches || nameMatches;
-      })
-    : statusFilteredRows;
+  const visibleRows = statusFilteredRows;
   return <section className="panel">
     <h3>RC Data extractor</h3>
     <p className="muted">تقرأ الأداة نماذج التسجيل PDF من مجلد الحجوزات المرتبط، وتستخدم arr.pdf أو arr.xml لمراجعة أرقام الغرف وأسماء النزلاء. التطابق الجزئي لا يُعتمد تلقائيًا عند وجود أكثر من احتمال.</p>
@@ -261,11 +268,11 @@ export default function RCDataExtractor() {
         type="text"
         value={roomSearchInput}
         onChange={(event) => setRoomSearchInput(event.target.value)}
-        onKeyDown={(event) => { if (event.key === "Enter") setSearchedRoom(roomSearchInput.trim()); }}
-        placeholder="ابحث برقم الغرفة أو اسم النزيل"
+        onKeyDown={(event) => { if (event.key === "Enter" && !busy) { const query = roomSearchInput.trim(); setSearchedRoom(query); runExtraction(query); } }}
+        placeholder="أرقام الغرف مثل 1116,0380 أو اسم ملف PDF"
         aria-label="البحث برقم الغرفة أو اسم النزيل"
       />
-      <button type="button" className="add-button" onClick={() => setSearchedRoom(roomSearchInput.trim())}>بحث</button>
+      <button type="button" className="add-button" onClick={() => { const query = roomSearchInput.trim(); setSearchedRoom(query); runExtraction(query); }} disabled={busy}>بحث الغرف المحددة</button>
       {searchedRoom && <button type="button" className="add-button" onClick={() => { setRoomSearchInput(""); setSearchedRoom(""); }}>إلغاء البحث</button>}
     </div>
     {rows.length > 0 && <>
