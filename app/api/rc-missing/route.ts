@@ -98,7 +98,7 @@ export async function POST(request: Request) {
     try {
       suppliedRooms = JSON.parse(rawPdfRooms);
     } catch {
-      return NextResponse.json({ error: "تعذر قراءة قائمة الغرف المستخرجة من ZIP." }, { status: 400 });
+      return NextResponse.json({ error: "تعذر قراءة قائمة الغرف المستخرجة من ملفات PDF." }, { status: 400 });
     }
     if (!Array.isArray(suppliedRooms)) {
       return NextResponse.json({ error: "قائمة غرف ملفات PDF غير صالحة." }, { status: 400 });
