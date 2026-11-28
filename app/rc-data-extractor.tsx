@@ -229,9 +229,16 @@ export default function RCDataExtractor() {
   }
 
   const statusFilteredRows = showAll ? rows : rows.filter((row) => row.status !== "matched");
-  const normalizedSearchRoom = searchedRoom.replace(/\\D/g, "");
-  const visibleRows = normalizedSearchRoom
-    ? statusFilteredRows.filter((row) => [row.room, row.arrivalRoom].some((room) => String(room || "").replace(/\\D/g, "") === normalizedSearchRoom))
+  const normalizedSearch = clean(searchedRoom);
+  const normalizedSearchDigits = searchedRoom.replace(/\D/g, "");
+  const visibleRows = normalizedSearch
+    ? statusFilteredRows.filter((row) => {
+        const roomMatches = Boolean(normalizedSearchDigits) && [row.room, row.arrivalRoom]
+          .some((room) => String(room || "").replace(/\D/g, "").includes(normalizedSearchDigits));
+        const nameMatches = [row.name, row.arrivalName, row.file]
+          .some((value) => clean(String(value || "")).includes(normalizedSearch));
+        return roomMatches || nameMatches;
+      })
     : statusFilteredRows;
   return <section className="panel">
     <h3>RC Data extractor</h3>
@@ -259,19 +266,18 @@ export default function RCDataExtractor() {
       <div className="uploads">
         <input
           type="text"
-          inputMode="numeric"
           value={roomSearchInput}
           onChange={(event) => setRoomSearchInput(event.target.value)}
           onKeyDown={(event) => { if (event.key === "Enter") setSearchedRoom(roomSearchInput.trim()); }}
-          placeholder="اكتب رقم الغرفة للبحث"
-          aria-label="رقم الغرفة للبحث"
+          placeholder="ابحث برقم الغرفة أو اسم النزيل"
+          aria-label="البحث برقم الغرفة أو اسم النزيل"
         />
-        <button type="button" className="add-button" onClick={() => setSearchedRoom(roomSearchInput.trim())}>بحث عن الغرفة</button>
+        <button type="button" className="add-button" onClick={() => setSearchedRoom(roomSearchInput.trim())}>بحث</button>
         {searchedRoom && <button type="button" className="add-button" onClick={() => { setRoomSearchInput(""); setSearchedRoom(""); }}>إلغاء البحث</button>}
         <button type="button" className="add-button" onClick={() => setShowAll((value) => !value)}>{showAll ? "عرض الحالات التي تحتاج مراجعة فقط" : "عرض جميع النماذج"}</button>
         <button type="button" className="add-button" onClick={downloadCsv}>تنزيل Excel CSV</button>
       </div>
-      {searchedRoom && <p className="muted">نتائج البحث عن الغرفة {searchedRoom}: {visibleRows.length} نتيجة</p>}
+      {searchedRoom && <p className="muted">نتائج البحث عن "{searchedRoom}": {visibleRows.length} نتيجة</p>}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 850 }}>
           <thead><tr>{["ملف PDF","الغرفة","اسم النموذج","الهاتف","البريد","اسم الوصول المطابق","غرفة الوصول","الحالة"].map((heading) => <th key={heading} style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #cbd5e1" }}>{heading}</th>)}</tr></thead>
