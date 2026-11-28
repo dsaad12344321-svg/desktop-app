@@ -738,13 +738,16 @@ export default function Home() {
           <option value="missing-profile">Missing Profile Detector</option>
           <option value="manager-report">Manager Report</option>
           <option value="journal">Journal Detector</option>
-          <option value="rc-missing">RC Missing</option>\n          <option value="rc-preview">RC Preview</option>
+          <option value="rc-missing">RC Missing</option>
+          <option value="rc-preview">RC Preview</option>
           <option value="guest-name-extractor">فتح Guest Name Extractor</option>
         </select>
       </section>
 
       <div style={{ display: activeTool === "guest-name-extractor" ? "block" : "none" }}><GuestNameExtractorPage /></div>
-      {activeTool === "guest-name-extractor" ? null : activeTool === "rc-preview" ? (\n        <RCPreview />\n      ) : activeTool === "nationality" ? (
+      {activeTool === "guest-name-extractor" ? null : activeTool === "rc-preview" ? (
+        <RCPreview />
+      ) : activeTool === "nationality" ? (
         <>
       <section className="panel">
         <h2>إدارة البيانات والإعدادات</h2>
