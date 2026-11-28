@@ -4,15 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFileLibrary, type SharedFolderEntry } from "./file-library-provider";
 
 function normalizeRoom(value: string) {
-  const digits = value.replace(/\\D/g, "");
+  const digits = value.replace(/\D/g, "");
   return digits.length === 3 || digits.length === 4 ? digits.padStart(4, "0") : "";
 }
 
 function parseRoomQuery(query: string): string[] {
   const rooms = new Set<string>();
-  const parts = query.split(/[,،;\\s]+/).map((part) => part.trim()).filter(Boolean);
+  const parts = query.split(/[,،;\s]+/).map((part) => part.trim()).filter(Boolean);
   for (const part of parts) {
-    const range = part.match(/^(\\d{3,4})\\s*[-–—]\\s*(\\d{3,4})$/);
+    const range = part.match(/^(\d{3,4})\s*[-–—]\s*(\d{3,4})$/);
     if (range) {
       const start = Number(normalizeRoom(range[1]));
       const end = Number(normalizeRoom(range[2]));
@@ -29,7 +29,7 @@ function parseRoomQuery(query: string): string[] {
 }
 
 function roomsInFilename(name: string) {
-  return (name.match(/(?<!\\d)\\d{3,4}(?!\\d)/g) || []).map((room) => room.padStart(4, "0"));
+  return (name.match(/(?<!\d)\d{3,4}(?!\d)/g) || []).map((room) => room.padStart(4, "0"));
 }
 
 export default function RCPreview() {
