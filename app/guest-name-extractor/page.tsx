@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useFileLibrary } from "../file-library-provider";
 import voucherRules from "./voucher-extraction-rules.json";
 
 type IndexedFile = {
@@ -1909,6 +1910,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
 }
 
 export default function GuestNameExtractorPage() {
+  const { setFolderPath: saveSharedFolder, getFile: getSharedFile } = useFileLibrary();
   const [files, setFiles] = useState<IndexedFile[]>([]);
   const [query, setQuery] = useState("");
   const [multipleSearchQuery, setMultipleSearchQuery] = useState("");
@@ -2285,16 +2287,14 @@ export default function GuestNameExtractorPage() {
     const indexed: IndexedFile[] = [];
     const failed: string[] = [];
     try {
-      await window.desktopBridge.saveFolderPath(rootPath);
-      const entries = await window.desktopBridge.listFolderFiles(rootPath);
+      const entries = await saveSharedFolder("reservations", rootPath);
       const watchEnabled = await window.desktopBridge.watchFolder(rootPath);
       setProgress({ done: 0, total: entries.length });
       for (let index = 0; index < entries.length; index++) {
         const entry = entries[index];
         const extension = entry.name.split(".").pop()?.toLowerCase() || "";
         try {
-          const bytes = await window.desktopBridge.readFile(rootPath, entry.path);
-          const file = new File([bytes.slice().buffer as ArrayBuffer], entry.name, { lastModified: entry.mtimeMs });
+          const file = await getSharedFile("reservations", entry);
           const extracted = await extractText(file, extension);
           const folderMetadata = getNativeFolderMetadata(entry.relativePath);
           indexed.push({
