@@ -121,7 +121,8 @@ function parseArrivalPdf(text: string): ArrivalGuest[] {
 export default function RCDataExtractor() {
   const [folderPath, setFolderPath] = useState("");
   const [entries, setEntries] = useState<FolderEntry[]>([]);
-  const [manualFiles, setManualFiles] = useState<File[]>([]);
+  const [rcFolderPath, setRcFolderPath] = useState("");
+  const [rcEntries, setRcEntries] = useState<FolderEntry[]>([]);
   const [arrivalFile, setArrivalFile] = useState<File | null>(null);
   const [rows, setRows] = useState<ExtractedRow[]>([]);
   const [message, setMessage] = useState("");
@@ -131,15 +132,44 @@ export default function RCDataExtractor() {
   useEffect(() => {
     let active = true;
     if (!window.desktopBridge) return;
-    void window.desktopBridge.getSavedFolderPath().then(async (path) => {
+    void Promise.all([
+      window.desktopBridge.getSavedFolderPath(),
+      window.desktopBridge.getSavedRCExtractorFolderPath()
+    ]).then(async ([reservationPath, savedRcPath]) => {
       if (!active) return;
-      setFolderPath(path || "");
-      if (path) setEntries(await window.desktopBridge!.listFolderFiles(path));
-    }).catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "تعذر قراءة مجلد الحجوزات."); });
+      setFolderPath(reservationPath || "");
+      setRcFolderPath(savedRcPath || "");
+      const [reservationFiles, rcFiles] = await Promise.all([
+        reservationPath ? window.desktopBridge!.listFolderFiles(reservationPath) : Promise.resolve([]),
+        savedRcPath ? window.desktopBridge!.listFolderFiles(savedRcPath) : Promise.resolve([])
+      ]);
+      if (!active) return;
+      setEntries(reservationFiles);
+      setRcEntries(rcFiles);
+    }).catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "تعذر استعادة المجلدات المحفوظة."); });
     return () => { active = false; };
   }, []);
 
-  const pdfEntries = useMemo(() => entries.filter((entry) => entry.name.toLowerCase().endsWith(".pdf") && !/^arr\.pdf$/i.test(entry.name)), [entries]);
+  const pdfEntries = useMemo(() => rcEntries.filter((entry) => entry.name.toLowerCase().endsWith(".pdf") && !/^arr\.pdf$/i.test(entry.name)), [rcEntries]);
+
+  async function chooseRCFolder() {
+    if (!window.desktopBridge) {
+      setMessage("اختيار المجلد متاح من تطبيق سطح المكتب فقط.");
+      return;
+    }
+    try {
+      const selectedPath = await window.desktopBridge.selectFolder();
+      if (!selectedPath) return;
+      await window.desktopBridge.saveRCExtractorFolderPath(selectedPath);
+      const files = await window.desktopBridge.listFolderFiles(selectedPath);
+      setRcFolderPath(selectedPath);
+      setRcEntries(files);
+      setRows([]);
+      setMessage(`تم حفظ المجلد. عثرت الأداة على ${files.filter((entry) => entry.name.toLowerCase().endsWith(".pdf")).length} ملف PDF داخله ومجلداته الفرعية.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "تعذر اختيار مجلد النماذج.");
+    }
+  }
   const matchedCount = rows.filter((row) => row.status === "matched").length;
   const reviewCount = rows.filter((row) => row.status === "review").length;
 
@@ -163,14 +193,13 @@ export default function RCDataExtractor() {
       }
       if (!arrivalGuests.length) throw new Error("لم أجد سجلات وصول قابلة للقراءة. تأكد من وجود arr.pdf أو arr.xml داخل المجلد المرتبط أو اختر التقرير يدويًا.");
       const selected: Array<{ name: string; data: Uint8Array }> = [];
-      if (window.desktopBridge && folderPath) {
+      if (window.desktopBridge && rcFolderPath) {
         for (const entry of pdfEntries) {
-          const bytes = await window.desktopBridge.readFile(folderPath, entry.path);
-          selected.push({ name: entry.name, data: new Uint8Array(bytes) });
+          const bytes = await window.desktopBridge.readFile(rcFolderPath, entry.path);
+          selected.push({ name: entry.relativePath || entry.name, data: new Uint8Array(bytes) });
         }
       }
-      for (const file of manualFiles) selected.push({ name: file.name, data: new Uint8Array(await file.arrayBuffer()) });
-      if (!selected.length) throw new Error("لم يتم العثور على نماذج PDF داخل المجلد المرتبط. اختر ملفات PDF يدويًا.");
+      if (!selected.length) throw new Error("لم يتم العثور على ملفات PDF داخل مجلد النماذج المحفوظ. اختر مجلدًا يحتوي على نماذج التسجيل.");
       const output: ExtractedRow[] = [];
       for (const file of selected) {
         if (/^arr\.pdf$/i.test(file.name)) continue;
@@ -220,16 +249,16 @@ export default function RCDataExtractor() {
   return <section className="panel">
     <h3>RC Data extractor</h3>
     <p className="muted">تقرأ الأداة نماذج التسجيل PDF من مجلد الحجوزات المرتبط، وتستخدم arr.pdf أو arr.xml لمراجعة أرقام الغرف وأسماء النزلاء. التطابق الجزئي لا يُعتمد تلقائيًا عند وجود أكثر من احتمال.</p>
-    {folderPath ? <p className="saved-hint" dir="ltr">المجلد المرتبط: {folderPath} — ملفات PDF: {pdfEntries.length}</p> : <p className="saved-hint">لا يوجد مجلد حجوزات مرتبط. يمكنك اختيار النماذج يدويًا وتحديد تقرير الوصول أدناه.</p>}
+    {folderPath ? <p className="saved-hint" dir="ltr">مجلد الحجوزات: {folderPath}</p> : <p className="saved-hint">لا يوجد مجلد حجوزات مرتبط؛ يمكنك اختيار تقرير الوصول يدويًا.</p>}
+    <div className="upload">
+      <label>مجلد نماذج PDF الإضافية</label>
+      <button className="button" type="button" onClick={chooseRCFolder}>اختيار مجلد النماذج</button>
+      {rcFolderPath ? <div className="filename" dir="ltr">{rcFolderPath}<br />تم العثور على {pdfEntries.length} ملف PDF (بما في ذلك المجلدات الفرعية)</div> : <div className="filename">لم يتم اختيار مجلد بعد. سيتم تذكر آخر مجلد تختاره وفتحه تلقائيًا عند دخول الأداة.</div>}
+    </div>
     <div className="upload">
       <label htmlFor="rc-data-arrival">تقرير الوصول (اختياري إذا كان arr.pdf أو arr.xml موجودًا في المجلد)</label>
       <input id="rc-data-arrival" type="file" accept=".pdf,.xml,application/pdf,text/xml,application/xml" onChange={(event) => setArrivalFile(event.target.files?.[0] || null)} />
       {arrivalFile && <div className="filename">{arrivalFile.name}</div>}
-    </div>
-    <div className="upload">
-      <label htmlFor="rc-data-pdfs">نماذج PDF إضافية (يمكن اختيار عدة ملفات)</label>
-      <input id="rc-data-pdfs" type="file" accept=".pdf,application/pdf" multiple onChange={(event) => setManualFiles(Array.from(event.target.files || []))} />
-      {manualFiles.length > 0 && <div className="filename">تم اختيار {manualFiles.length} ملف</div>}
     </div>
     <button className="button" type="button" onClick={runExtraction} disabled={busy}>{busy ? "جارٍ الاستخراج..." : "استخراج بيانات النماذج"}</button>
     {message && <div className="notice" role="status">{message}</div>}
