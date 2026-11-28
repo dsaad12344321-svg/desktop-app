@@ -256,6 +256,18 @@ export default function RCDataExtractor() {
     </div>
     <button className="button" type="button" onClick={runExtraction} disabled={busy}>{busy ? "جارٍ الاستخراج..." : "استخراج بيانات النماذج"}</button>
     {message && <div className="notice" role="status">{message}</div>}
+    <div className="uploads">
+      <input
+        type="text"
+        value={roomSearchInput}
+        onChange={(event) => setRoomSearchInput(event.target.value)}
+        onKeyDown={(event) => { if (event.key === "Enter") setSearchedRoom(roomSearchInput.trim()); }}
+        placeholder="ابحث برقم الغرفة أو اسم النزيل"
+        aria-label="البحث برقم الغرفة أو اسم النزيل"
+      />
+      <button type="button" className="add-button" onClick={() => setSearchedRoom(roomSearchInput.trim())}>بحث</button>
+      {searchedRoom && <button type="button" className="add-button" onClick={() => { setRoomSearchInput(""); setSearchedRoom(""); }}>إلغاء البحث</button>}
+    </div>
     {rows.length > 0 && <>
       <div className="summary-grid">
         <div><strong>{rows.length}</strong><span>النماذج</span></div>
@@ -264,16 +276,6 @@ export default function RCDataExtractor() {
         <div><strong>{rows.filter((row) => row.status === "unmatched").length}</strong><span>غير مطابق</span></div>
       </div>
       <div className="uploads">
-        <input
-          type="text"
-          value={roomSearchInput}
-          onChange={(event) => setRoomSearchInput(event.target.value)}
-          onKeyDown={(event) => { if (event.key === "Enter") setSearchedRoom(roomSearchInput.trim()); }}
-          placeholder="ابحث برقم الغرفة أو اسم النزيل"
-          aria-label="البحث برقم الغرفة أو اسم النزيل"
-        />
-        <button type="button" className="add-button" onClick={() => setSearchedRoom(roomSearchInput.trim())}>بحث</button>
-        {searchedRoom && <button type="button" className="add-button" onClick={() => { setRoomSearchInput(""); setSearchedRoom(""); }}>إلغاء البحث</button>}
         <button type="button" className="add-button" onClick={() => setShowAll((value) => !value)}>{showAll ? "عرض الحالات التي تحتاج مراجعة فقط" : "عرض جميع النماذج"}</button>
         <button type="button" className="add-button" onClick={downloadCsv}>تنزيل Excel CSV</button>
       </div>
