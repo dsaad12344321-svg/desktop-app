@@ -3446,9 +3446,9 @@ export default function GuestNameExtractorPage() {
           placeholder="اكتب أو الصق النص هنا..."
           aria-label="النص المراد تحويله"
           rows={3} style={{ display: "block", width: "100%", boxSizing: "border-box", resize: "vertical",
-            border: "1px solid #cbd5e1", borderRadius: 8, padding: 9, font: "inherit", direction: "auto" }} />
+            border: "1px solid #cbd5e1", borderRadius: 8, padding: 9, font: "inherit" }} dir="auto" />
         <div style={{ marginTop: 8, padding: 9, minHeight: 38, maxHeight: 120, overflow: "auto",
-          borderRadius: 8, background: "#f1f5f9", whiteSpace: "pre-wrap", overflowWrap: "anywhere", direction: "auto" }}>
+          borderRadius: 8, background: "#f1f5f9", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} dir="auto">
           {capitalizerText.replace(/[\p{L}\p{N}]+/gu, (word) => word.charAt(0).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase())}
         </div>
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 7, marginTop: 9 }}>
