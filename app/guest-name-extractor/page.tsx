@@ -1605,21 +1605,6 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
   // separate room searches so each guest is resolved against their own arrival.
   const terms = inputTerms.flatMap((term) => {
     const compact = normalize(term).replace(/\s+/g, "");
-
-    // Company searches return every booking file in the supplier folder.
-    const companyQuery = getMultipleCompanyQuery(term);
-    if (companyQuery) {
-      const companyFiles = files.filter((candidate) =>
-        isCompanyFolderMatch(candidate.company, companyQuery, files),
-      );
-      return companyFiles.map((companyFile, fileIndex) => ({
-        key: index + "-" + compact + "-" + fileIndex + "-" + companyFile.id,
-        term,
-        arrival: null,
-        file: companyFile,
-        people: extractPeopleForMultipleView(companyFile, "", true),
-      }));
-    }
     const sameConfirmation = arrivals.filter((item) =>
       normalize(item.confirmationNo).replace(/\s+/g, "") === compact,
     );
@@ -1636,6 +1621,22 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
 
   return terms.flatMap((term, index) => {
     const compact = normalize(term).replace(/\s+/g, "");
+
+    // Company searches return every booking file in the supplier folder.
+    const companyQuery = getMultipleCompanyQuery(term);
+    if (companyQuery) {
+      const companyFiles = files.filter((candidate) =>
+        isCompanyFolderMatch(candidate.company, companyQuery, files),
+      );
+      return companyFiles.map((companyFile, fileIndex) => ({
+        key: index + "-" + compact + "-" + fileIndex + "-" + companyFile.id,
+        term,
+        arrival: null,
+        file: companyFile,
+        people: extractPeopleForMultipleView(companyFile, "", true),
+      }));
+    }
+
     const arrival = arrivals.find((item) =>
       normalize(item.roomNo).replace(/\s+/g, "") === compact
       || normalize(item.confirmationNo).replace(/\s+/g, "") === compact
