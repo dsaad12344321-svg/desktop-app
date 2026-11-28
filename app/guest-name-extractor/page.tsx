@@ -722,17 +722,19 @@ function extractPlanetPeople(pages: string[], searchTerm: string) {
   const groups: PlanetBooking[] = [];
   const byVoucher = new Map<string, PlanetBooking>();
   let current: PlanetBooking | null = null;
+  let lastPerson: MultipleGuest | null = null;
 
-  const addGuest = (raw: string, group: PlanetBooking) => {
+  const addGuest = (raw: string, group: PlanetBooking): MultipleGuest | null => {
     const guest = raw.match(/\b(MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF)\.?\s+(.+?)(?=\s+\d{1,2}[./-]\d{1,2}[./-]\d{4}\b|\s+(?:ARR\b|ENT\d|SINGLE\s+ROOM|DOUBLE\s+ROOM|TRIPLE\s+ROOM|QUAD\s+ROOM)\b|$)/i);
-    if (!guest) return;
+    if (!guest) return null;
     const name = guest[2].replace(/\s+/g, " ").replace(/[,.]+$/, "").trim();
-    if (!name || /^(?:SURNAME,? NAME|TOTAL PAX|TOTAL ROOM)$/i.test(name)) return;
+    if (!name || /^(?:SURNAME,? NAME|TOTAL PAX|TOTAL ROOM)$/i.test(name)) return null;
     const dob = raw.match(/\b(\d{1,2}[./-]\d{1,2}[./-]\d{4})\b/)?.[1] || "";
     const person = { name: titleCaseName(name), dob: dob.replace(/[/-]/g, ".") };
-    if (!group.people.some((item) => normalize(item.name) === normalize(person.name) && item.dob === person.dob)) {
-      group.people.push(person);
-    }
+    const existing = group.people.find((item) => normalize(item.name) === normalize(person.name) && item.dob === person.dob);
+    if (existing) return existing;
+    group.people.push(person);
+    return person;
   };
 
   for (const rawLine of pages.join("\n").split(/\r?\n/)) {
@@ -746,15 +748,21 @@ function extractPlanetPeople(pages: string[], searchTerm: string) {
         byVoucher.set(voucher, current);
         groups.push(current);
       }
-      addGuest(start[2], current);
+      lastPerson = addGuest(start[2], current);
       continue;
     }
     if (/^(?:NOTE:|TOTAL\s+PAX\b|TOTAL\s+ROOM\b|LONG\s+BEACH\s+HOTEL\s+TOTALS?)/i.test(line)) {
       current = null;
+      lastPerson = null;
       continue;
     }
     if (current && /^(?:MR|MRS|MS|MISS|MSTR|MASTER|CHD|CHILD|INF)\.?\s+/i.test(line)) {
-      addGuest(line, current);
+      lastPerson = addGuest(line, current);
+    } else if (current && lastPerson && line.length >= 4
+      && /^[\\p{L}][\\p{L}'’.-]{2,40}$/u.test(line)
+      && line === line.toLocaleUpperCase()) {
+      // Some Planet PDFs wrap a long surname onto its own visual line.
+      lastPerson.name = titleCaseName(lastPerson.name + " " + line);
     }
   }
 
