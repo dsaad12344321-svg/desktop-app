@@ -1951,12 +1951,17 @@ export default function GuestNameExtractorPage() {
     );
     const isArrivalNumberSearch = linkedArrivalGuests.length > 0;
     const matchingArrivalNames = linkedArrivalGuests.map((item) => item.name);
+    const isLturFallbackQuery = q.replace(/\s+/g, "") === "ltur"
+      && !files.some((item) => normalizeCompanyKey(item.company) === "ltur");
 
     const matchedResults = files.flatMap((item) => {
       const matchedPages = item.pages.reduce<number[]>((acc, page, index) => {
         const searchable = [item.name, item.path, item.company, page].join(" ");
         const matchesLinkedGuest = matchingArrivalNames.some((name) => arrivalNameMatchesText(name, searchable));
-        const matchesDirectQuery = !isArrivalNumberSearch && matchesSearchText(searchable, query);
+        const matchesDirectQuery = !isArrivalNumberSearch && (
+          matchesSearchText(searchable, query)
+          || (isLturFallbackQuery && normalizeCompanyKey(item.company) === "tui")
+        );
         if (matchesDirectQuery || matchesLinkedGuest) {
           acc.push(index + 1);
         }
