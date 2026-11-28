@@ -2405,10 +2405,16 @@ export default function GuestNameExtractorPage() {
           // Outlook/MSG قد يضع application/octet-stream حتى لو كان الامتداد صورة.
           // نثق بنوع MIME الصريح إذا كان مفيدًا، وإلا نستنتجه من امتداد الملف.
           const declaredMime = String(row.attachMimeTag || "").split(";")[0].trim().toLowerCase();
+          const attachmentBytes = new Uint8Array(extracted.content);
+          const hasPdfSignature = attachmentBytes.length >= 5
+            && String.fromCharCode(...attachmentBytes.slice(0, 5)) === "%PDF-";
           const mime = declaredMime && declaredMime !== "application/octet-stream"
             ? declaredMime
-            : (mimeByExtension[extension] || declaredMime || "application/octet-stream");
-          const blob = new Blob([new Uint8Array(extracted.content).buffer as ArrayBuffer], { type: mime });
+            : (mimeByExtension[extension] || (hasPdfSignature ? "application/pdf" : declaredMime) || "application/octet-stream");
+          const blob = new Blob([attachmentBytes.buffer.slice(
+            attachmentBytes.byteOffset,
+            attachmentBytes.byteOffset + attachmentBytes.byteLength,
+          ) as ArrayBuffer], { type: mime });
           return { name, type: mime, blob, url: URL.createObjectURL(blob), size: blob.size };
         });
         const html = typeof data.bodyHtml === "string" ? data.bodyHtml : "";
