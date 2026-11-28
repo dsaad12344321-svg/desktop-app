@@ -261,7 +261,7 @@ export default function RCDataExtractor() {
       <input id="rc-data-arrival" type="file" accept=".pdf,.xml,application/pdf,text/xml,application/xml" onChange={(event) => setArrivalFile(event.target.files?.[0] || null)} />
       {arrivalFile && <div className="filename">{arrivalFile.name}</div>}
     </div>
-    <button className="button" type="button" onClick={runExtraction} disabled={busy}>{busy ? "جارٍ الاستخراج..." : "استخراج بيانات النماذج"}</button>
+    <button className="button" type="button" onClick={() => runExtraction("")} disabled={busy}>{busy ? "جارٍ الاستخراج..." : "استخراج بيانات النماذج"}</button>
     {message && <div className="notice" role="status">{message}</div>}
     <div className="uploads">
       <input
