@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useFileLibrary } from "./file-library-provider";
 
 type FolderEntry = { path: string; relativePath: string; name: string; size: number };
 type ArrivalGuest = { room: string; name: string; phone: string; email: string; source: string };
@@ -119,10 +120,11 @@ function parseArrivalPdf(text: string): ArrivalGuest[] {
 }
 
 export default function RCDataExtractor() {
-  const [folderPath, setFolderPath] = useState("");
-  const [entries, setEntries] = useState<FolderEntry[]>([]);
-  const [rcFolderPath, setRcFolderPath] = useState("");
-  const [rcEntries, setRcEntries] = useState<FolderEntry[]>([]);
+  const { reservations, registrations, setFolderPath: saveSharedFolder, readBytes } = useFileLibrary();
+  const folderPath = reservations.path;
+  const entries = reservations.entries as FolderEntry[];
+  const rcFolderPath = registrations.path;
+  const rcEntries = registrations.entries as FolderEntry[];
   const [arrivalFile, setArrivalFile] = useState<File | null>(null);
   const [rows, setRows] = useState<ExtractedRow[]>([]);
   const [message, setMessage] = useState("");
@@ -130,27 +132,6 @@ export default function RCDataExtractor() {
   const [showAll, setShowAll] = useState(false);
   const [roomSearchInput, setRoomSearchInput] = useState("");
   const [searchedRoom, setSearchedRoom] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    if (!window.desktopBridge) return;
-    void Promise.all([
-      window.desktopBridge.getSavedFolderPath(),
-      window.desktopBridge.getSavedRCExtractorFolderPath()
-    ]).then(async ([reservationPath, savedRcPath]) => {
-      if (!active) return;
-      setFolderPath(reservationPath || "");
-      setRcFolderPath(savedRcPath || "");
-      const [reservationFiles, rcFiles] = await Promise.all([
-        reservationPath ? window.desktopBridge!.listFolderFiles(reservationPath) : Promise.resolve([]),
-        savedRcPath ? window.desktopBridge!.listFolderFiles(savedRcPath) : Promise.resolve([])
-      ]);
-      if (!active) return;
-      setEntries(reservationFiles);
-      setRcEntries(rcFiles);
-    }).catch((error) => { if (active) setMessage(error instanceof Error ? error.message : "تعذر استعادة المجلدات المحفوظة."); });
-    return () => { active = false; };
-  }, []);
 
   const pdfEntries = useMemo(() => rcEntries.filter((entry) => entry.name.toLowerCase().endsWith(".pdf") && !/^arr\.pdf$/i.test(entry.name)), [rcEntries]);
 
@@ -162,10 +143,8 @@ export default function RCDataExtractor() {
     try {
       const selectedPath = await window.desktopBridge.selectFolder();
       if (!selectedPath) return;
-      await window.desktopBridge.saveRCExtractorFolderPath(selectedPath);
-      const files = await window.desktopBridge.listFolderFiles(selectedPath);
-      setRcFolderPath(selectedPath);
-      setRcEntries(files);
+      const files = await saveSharedFolder("registration", selectedPath);
+
       setRows([]);
       setMessage(`تم حفظ المجلد. عثرت الأداة على ${files.filter((entry) => entry.name.toLowerCase().endsWith(".pdf")).length} ملف PDF داخله ومجلداته الفرعية.`);
     } catch (error) {
@@ -190,7 +169,7 @@ export default function RCDataExtractor() {
       } else if (linkedArrivals.length && window.desktopBridge) {
         const arrival = linkedArrivals.find((item) => item.entry.name.toLowerCase() === "arr.xml") || linkedArrivals.find((item) => item.entry.name.toLowerCase() === "arr.pdf");
         if (arrival) {
-          const bytes = await window.desktopBridge.readFile(arrival.root, arrival.entry.path);
+          const bytes = await readBytes(arrival.root === folderPath ? "reservations" : "registration", arrival.entry as FolderEntry);
           const text = arrival.entry.name.toLowerCase().endsWith(".xml") ? new TextDecoder().decode(bytes) : await pdfText(new Uint8Array(bytes));
           arrivalGuests = arrival.entry.name.toLowerCase().endsWith(".xml") ? parseArrivalXml(text) : parseArrivalPdf(text);
         }
@@ -199,7 +178,7 @@ export default function RCDataExtractor() {
       const selected: Array<{ name: string; data: Uint8Array }> = [];
       if (window.desktopBridge && rcFolderPath) {
         for (const entry of pdfEntries) {
-          const bytes = await window.desktopBridge.readFile(rcFolderPath, entry.path);
+          const bytes = await readBytes("registration", entry);
           selected.push({ name: entry.relativePath || entry.name, data: new Uint8Array(bytes) });
         }
       }
