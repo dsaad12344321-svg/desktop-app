@@ -177,18 +177,20 @@ export default function RCDataExtractor() {
     setBusy(true); setMessage("جارٍ قراءة تقرير الوصول ونماذج التسجيل..."); setRows([]);
     try {
       let arrivalGuests: ArrivalGuest[] = [];
-      let linkedArrivals: FolderEntry[] = [];
-      if (folderPath) linkedArrivals = entries.filter((entry) => /^(arr\.pdf|arr\.xml)$/i.test(entry.name));
+      const linkedArrivals = [
+        ...entries.filter((entry) => /^(arr\.pdf|arr\.xml)$/i.test(entry.name)).map((entry) => ({ entry, root: folderPath })),
+        ...rcEntries.filter((entry) => /^(arr\.pdf|arr\.xml)$/i.test(entry.name)).map((entry) => ({ entry, root: rcFolderPath }))
+      ].filter((item) => item.root);
       const sourceFile = arrivalFile;
       if (sourceFile) {
         const text = sourceFile.name.toLowerCase().endsWith(".xml") ? await sourceFile.text() : await pdfText(new Uint8Array(await sourceFile.arrayBuffer()));
         arrivalGuests = sourceFile.name.toLowerCase().endsWith(".xml") ? parseArrivalXml(text) : parseArrivalPdf(text);
       } else if (linkedArrivals.length && window.desktopBridge) {
-        const arrival = linkedArrivals.find((entry) => entry.name.toLowerCase() === "arr.xml") || linkedArrivals.find((entry) => entry.name.toLowerCase() === "arr.pdf");
+        const arrival = linkedArrivals.find((item) => item.entry.name.toLowerCase() === "arr.xml") || linkedArrivals.find((item) => item.entry.name.toLowerCase() === "arr.pdf");
         if (arrival) {
-          const bytes = await window.desktopBridge.readFile(folderPath, arrival.path);
-          const text = arrival.name.toLowerCase().endsWith(".xml") ? new TextDecoder().decode(bytes) : await pdfText(new Uint8Array(bytes));
-          arrivalGuests = arrival.name.toLowerCase().endsWith(".xml") ? parseArrivalXml(text) : parseArrivalPdf(text);
+          const bytes = await window.desktopBridge.readFile(arrival.root, arrival.entry.path);
+          const text = arrival.entry.name.toLowerCase().endsWith(".xml") ? new TextDecoder().decode(bytes) : await pdfText(new Uint8Array(bytes));
+          arrivalGuests = arrival.entry.name.toLowerCase().endsWith(".xml") ? parseArrivalXml(text) : parseArrivalPdf(text);
         }
       }
       if (!arrivalGuests.length) throw new Error("لم أجد سجلات وصول قابلة للقراءة. تأكد من وجود arr.pdf أو arr.xml داخل المجلد المرتبط أو اختر التقرير يدويًا.");
