@@ -27,6 +27,7 @@ type FileLibraryContextValue = {
   setFolderPath: (kind: SharedFolderKind, rootPath: string) => Promise<SharedFolderEntry[]>;
   readBytes: (kind: SharedFolderKind, entry: SharedFolderEntry) => Promise<Uint8Array>;
   getFile: (kind: SharedFolderKind, entry: SharedFolderEntry) => Promise<File>;
+  getFiles: (kind: SharedFolderKind, entries?: SharedFolderEntry[]) => Promise<File[]>;
 };
 
 const emptyFolder: FolderState = { path: "", entries: [], loading: false, loaded: false, error: "" };
@@ -36,6 +37,8 @@ export function FileLibraryProvider({ children }: { children: ReactNode }) {
   const [reservations, setReservations] = useState<FolderState>(emptyFolder);
   const [registrations, setRegistrations] = useState<FolderState>(emptyFolder);
   const byteCache = useRef(new Map<string, Uint8Array>());
+  const cachedBytes = useRef(0);
+  const maxCacheBytes = 256 * 1024 * 1024;
 
   const updateFolder = useCallback((kind: SharedFolderKind, updater: (current: FolderState) => FolderState) => {
     const setter = kind === "reservations" ? setReservations : setRegistrations;
@@ -59,8 +62,11 @@ export function FileLibraryProvider({ children }: { children: ReactNode }) {
       const listedEntries = await window.desktopBridge.listFolderFiles(rootPath);
       const entries = listedEntries.map(entry => ({ ...entry, rootPath }));
       const liveKeys = new Set(entries.map(entry => entry.path + "|" + entry.size + "|" + entry.mtimeMs));
-      for (const key of byteCache.current.keys()) {
-        if (key.startsWith(kind + "|") && !liveKeys.has(key.slice(kind.length + 1))) byteCache.current.delete(key);
+      for (const [key, value] of byteCache.current) {
+        if (key.startsWith(kind + "|") && !liveKeys.has(key.slice(kind.length + 1))) {
+          cachedBytes.current -= value.byteLength;
+          byteCache.current.delete(key);
+        }
       }
       updateFolder(kind, () => ({ path: rootPath, entries, loading: false, loaded: true, error: "" }));
       return entries;
@@ -86,10 +92,24 @@ export function FileLibraryProvider({ children }: { children: ReactNode }) {
     if (!rootPath || !window.desktopBridge) throw new Error("المجلد غير متاح حاليًا.");
     const key = kind + "|" + entry.path + "|" + entry.size + "|" + entry.mtimeMs;
     const cached = byteCache.current.get(key);
-    if (cached) return cached.slice();
+    if (cached) {
+      byteCache.current.delete(key);
+      byteCache.current.set(key, cached);
+      return cached.slice();
+    }
     const bytes = await window.desktopBridge.readFile(rootPath, entry.path);
     const stored = new Uint8Array(bytes);
-    byteCache.current.set(key, stored);
+    if (stored.byteLength <= maxCacheBytes) {
+      while (cachedBytes.current + stored.byteLength > maxCacheBytes && byteCache.current.size) {
+        const oldestKey = byteCache.current.keys().next().value as string | undefined;
+        if (!oldestKey) break;
+        const oldest = byteCache.current.get(oldestKey);
+        if (oldest) cachedBytes.current -= oldest.byteLength;
+        byteCache.current.delete(oldestKey);
+      }
+      byteCache.current.set(key, stored);
+      cachedBytes.current += stored.byteLength;
+    }
     return stored.slice();
   }, [reservations, registrations]);
 
@@ -97,6 +117,12 @@ export function FileLibraryProvider({ children }: { children: ReactNode }) {
     const bytes = await readBytes(kind, entry);
     return new File([bytes.buffer as ArrayBuffer], entry.name, { lastModified: entry.mtimeMs });
   }, [readBytes]);
+
+  const getFiles = useCallback(async (kind: SharedFolderKind, selectedEntries?: SharedFolderEntry[]) => {
+    const folder = kind === "reservations" ? reservations : registrations;
+    const entries = selectedEntries || folder.entries;
+    return Promise.all(entries.map(entry => getFile(kind, entry)));
+  }, [reservations, registrations, getFile]);
 
   useEffect(() => {
     if (!window.desktopBridge) return;
@@ -111,8 +137,8 @@ export function FileLibraryProvider({ children }: { children: ReactNode }) {
   }, [refreshFolder]);
 
   const value = useMemo(() => ({
-    reservations, registrations, refreshFolder, setFolderPath, readBytes, getFile,
-  }), [reservations, registrations, refreshFolder, setFolderPath, readBytes, getFile]);
+    reservations, registrations, refreshFolder, setFolderPath, readBytes, getFile, getFiles,
+  }), [reservations, registrations, refreshFolder, setFolderPath, readBytes, getFile, getFiles]);
 
   return <FileLibraryContext.Provider value={value}>{children}</FileLibraryContext.Provider>;
 }
