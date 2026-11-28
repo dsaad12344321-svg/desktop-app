@@ -129,7 +129,14 @@ const normalize = (value: string) =>
   value.toLocaleLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
 
 function canonicalizeArrivalCompany(value: string) {
-  const cleaned = normalize(value.replace(/^T\s*-\s*/i, ""));
+  const raw = value.replace(/^T\s*-\s*/i, "").trim();
+  const cleaned = normalize(raw);
+  // Some arrival-report exports append stay dates and operational codes to
+  // the supplier name. Resolve known multi-word suppliers before stripping
+  // that metadata so all rows group under one canonical company.
+  if (/^easy\s*jet(?:\s+tours?)?\b/.test(cleaned)) return "Easy Jet";
+  if (/^house\s+use\b/.test(cleaned)) return "House use";
+  if (/^l\s+tur\b/.test(cleaned)) return "L tur";
   if (/biblio|biblo/.test(cleaned)) return "biblio";
   if (/anex/.test(cleaned)) return "Anex";
   if (/(^|\s)mts(\s|$)/.test(cleaned)) return "MTS";
@@ -140,7 +147,9 @@ function canonicalizeArrivalCompany(value: string) {
   if (/tez/.test(cleaned)) return "TEZ";
   if (/travel ways/.test(cleaned)) return "Travel Ways";
   if (/hotel direct/.test(cleaned)) return "Hotel Direct";
-  return value.replace(/^T\s*-\s*/i, "").trim();
+  // Generic supplier labels may also be followed by DD-MM-YY dates and
+  // reservation/operational metadata. Keep only the company-name prefix.
+  return raw.replace(/\s+\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b[\s\S]*$/, "").trim() || raw;
 }
 
 function getPreviewMimeType(extension: string) {
