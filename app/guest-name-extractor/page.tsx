@@ -375,9 +375,12 @@ async function extractText(file: File, extension: string): Promise<{ content: st
       try {
         const extractedAttachment = msgReader.getAttachment(attachment);
         const attachmentBytes = new Uint8Array(extractedAttachment.content);
+        const declaredAttachmentMime = String(attachment.attachMimeTag || "").split(";")[0].trim().toLowerCase();
+        const hasPdfSignature = attachmentBytes.length >= 5
+          && String.fromCharCode(...attachmentBytes.slice(0, 5)) === "%PDF-";
 
         const extractedPages: string[] = [];
-        if (attachmentExtension === "pdf") {
+        if (attachmentExtension === "pdf" || declaredAttachmentMime === "application/pdf" || hasPdfSignature) {
           const pdfjs = await import("pdfjs-dist");
           pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
           const pdf = await pdfjs.getDocument({ data: attachmentBytes }).promise;
@@ -1587,7 +1590,7 @@ function extractPeopleFromIndexedFile(
   }
   if (isMtsIndexedFile(file)) {
     const voucherPages = isMsg
-      ? (file.attachmentPages || []).filter(isMtsVoucherAttachment).flatMap((attachment) => attachment.pages)
+      ? (file.attachmentPages || []).filter((attachment) => isMtsVoucherAttachment(attachment, file.name)).flatMap((attachment) => attachment.pages)
       : /guest\s*voucher/i.test(file.name) ? file.pages : [];
     if (!voucherPages.length) return [];
     const compactQuery = normalize(searchTerm).replace(/\s+/g, "");
@@ -1668,7 +1671,7 @@ function isMtsGuestVoucherListFile(file: Pick<IndexedFile, "name" | "path" | "ex
 
 function isMtsVoucherAttachment(attachment: { name: string; pages: string[] }, parentName = "") {
   return /guest\s*voucher/i.test(attachment.name)
-    || (/guest\s*voucher(?:\s+list)?/i.test(parentName) && /\.pdf$/i.test(attachment.name))
+    || /guest\s*voucher(?:\s+list)?/i.test(parentName)
     || attachment.pages.some((page) => /\bVoucher\s+Reference\s+No\.?\s*:/i.test(page)
       && /\bTravellers\s*:/i.test(page));
 }
