@@ -199,13 +199,18 @@ function matchesSearchText(searchableText: string, query: string) {
 }
 
 
-// Arrival reports may use "SURNAME, Mr. GIVEN" while vouchers use
-// "MR. SURNAME GIVEN". Match meaningful name parts regardless of order.
+// Arrival reports may contain compound surnames (e.g. "LOPES PEREIRA, Rosa")
+// while a supplier voucher may store only "PEREIRA ROSA". Search each
+// meaningful name part independently so a missing surname component does not
+// hide an otherwise valid booking. Titles and very short tokens are ignored.
 const arrivalNameMatchesText = (arrivalName: string, searchableText: string) => {
-  const ignored = new Set(["mr", "mrs", "ms", "miss", "mstr", "master"]);
-  const tokens = normalize(arrivalName).split(/\s+/).filter((token) => token.length > 1 && !ignored.has(token));
+  const ignored = new Set(["mr", "mrs", "ms", "miss", "mstr", "master", "chd", "child", "inf", "adt", "adult"]);
+  const tokens = normalize(arrivalName)
+    .split(/\s+/)
+    .filter((token) => token.length >= 3 && !ignored.has(token));
+  if (!tokens.length) return false;
   const searchable = ` ${normalize(searchableText)} `;
-  return tokens.length >= 2 && tokens.every((token) => searchable.includes(` ${token} `));
+  return tokens.some((token) => searchable.includes(` ${token} `));
 };
 
 const SUN_IGNORED_TITLE_TOKENS = new Set([
