@@ -152,6 +152,37 @@ function canonicalizeArrivalCompany(value: string) {
   return raw.replace(/\s+\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b[\s\S]*$/, "").trim() || raw;
 }
 
+function normalizeCompanyKey(value: string) {
+  return normalize(canonicalizeArrivalCompany(value)).replace(/\s+/g, "");
+}
+
+function getMultipleCompanyQuery(value: string) {
+  const key = normalize(value).replace(/\s+/g, "");
+  const aliases: Record<string, string> = {
+    w2m: "W2M", world2meet: "W2M",
+    tui: "TUI", tuidestimo: "TUI",
+    ltur: "L tur",
+    biblio: "biblio", biblioglobus: "biblio", biblo: "biblio",
+    anex: "Anex", anextours: "Anex",
+    mts: "MTS", odeon: "Odeon", tez: "TEZ",
+    funsun: "FUN&SUN", suninternational: "SUN International",
+  };
+  return aliases[key] || "";
+}
+
+function isCompanyFolderMatch(fileCompany: string, requestedCompany: string, files: IndexedFile[]) {
+  const requested = normalizeCompanyKey(requestedCompany);
+  const actual = normalizeCompanyKey(fileCompany);
+  if (requested === actual) return true;
+  // L tur uses the TUI voucher layout. Fall back to the TUI folder only
+  // when the indexed booking tree contains no L tur folder.
+  if (requested === "ltur") {
+    const hasLturFolder = files.some((file) => normalizeCompanyKey(file.company) === "ltur");
+    return !hasLturFolder && actual === "tui";
+  }
+  return false;
+}
+
 function getPreviewMimeType(extension: string) {
   const mimeTypes: Record<string, string> = {
     pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg",
@@ -1574,6 +1605,21 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
   // separate room searches so each guest is resolved against their own arrival.
   const terms = inputTerms.flatMap((term) => {
     const compact = normalize(term).replace(/\s+/g, "");
+
+    // Company searches return every booking file in the supplier folder.
+    const companyQuery = getMultipleCompanyQuery(term);
+    if (companyQuery) {
+      const companyFiles = files.filter((candidate) =>
+        isCompanyFolderMatch(candidate.company, companyQuery, files),
+      );
+      return companyFiles.map((companyFile, fileIndex) => ({
+        key: index + "-" + compact + "-" + fileIndex + "-" + companyFile.id,
+        term,
+        arrival: null,
+        file: companyFile,
+        people: extractPeopleForMultipleView(companyFile, "", true),
+      }));
+    }
     const sameConfirmation = arrivals.filter((item) =>
       normalize(item.confirmationNo).replace(/\s+/g, "") === compact,
     );
@@ -1588,7 +1634,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
   const voucherCandidates = getMtsVoucherCandidates(files);
   const searchableText = new Map(files.map((file) => [file.id, getMtsIndexedText(file)]));
 
-  return terms.map((term, index) => {
+  return terms.flatMap((term, index) => {
     const compact = normalize(term).replace(/\s+/g, "");
     const arrival = arrivals.find((item) =>
       normalize(item.roomNo).replace(/\s+/g, "") === compact
@@ -1700,7 +1746,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
       // same-name hits from other operators (e.g. Biblio rooming-list emails).
       const companyScopedFiles = arrival?.company
         ? matchingFiles.filter((candidate) =>
-            normalize(canonicalizeArrivalCompany(candidate.company)) === normalize(canonicalizeArrivalCompany(arrival.company || "")),
+            isCompanyFolderMatch(candidate.company, arrival.company || "", files),
           )
         : [];
       const sourceFiles = companyScopedFiles.length ? companyScopedFiles : matchingFiles;
@@ -1726,12 +1772,35 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
       people = file ? extractPeopleForMultipleView(file, targetName, true) : [];
     }
 
+    // A booking code can point to a separate file for each reservation.
+    // Return all exact code hits instead of silently selecting the first one.
+    const isAlphanumericReference = !arrival && /^[a-z0-9-]{5,}$/i.test(compact);
+    if (isAlphanumericReference && (!file || !isMtsIndexedFile(file))) {
+      const referenceFiles = files.filter((candidate) =>
+        !isMtsIndexedFile(candidate) && matchesSearchText(getMtsIndexedText(candidate), term),
+      );
+      if (referenceFiles.length) {
+        return referenceFiles.map((referenceFile, fileIndex) => {
+          const extracted = extractPeopleForMultipleView(referenceFile, term, true);
+          const unique = isW2mIndexedFile(referenceFile) || isSunInternationalIndexedFile(referenceFile)
+            ? extracted
+            : extracted.filter((person, personIndex, all) =>
+                all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
+                  && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
+          return {
+            key: index + "-" + compact + "-" + fileIndex + "-" + referenceFile.id,
+            term, arrival: null, file: referenceFile, people: unique,
+          };
+        });
+      }
+    }
+
     const uniquePeople = file && (isMtsIndexedFile(file) || isSunInternationalIndexedFile(file) || isW2mIndexedFile(file))
       ? people
       : people.filter((person, personIndex, all) =>
           all.findIndex((candidate) => normalize(candidate.name) === normalize(person.name)
             && normalize(candidate.dob) === normalize(person.dob)) === personIndex);
-    return { key: index + "-" + compact, term, arrival, file, voucherFile, voucherPageNumber, people: uniquePeople };
+    return [{ key: index + "-" + compact, term, arrival, file, voucherFile, voucherPageNumber, people: uniquePeople }];
   });
 }
 
