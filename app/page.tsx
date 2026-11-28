@@ -519,7 +519,7 @@ export default function Home() {
     link.remove();
     URL.revokeObjectURL(url);
   }
-  function extractPdfRoomsFromFiles(files: File[]) {
+  function extractPdfRoomsFromFiles(files: Array<{ name: string }>) {
     const rooms = new Set<string>();
     const pdfFiles = files.filter((file) => file.name.toLowerCase().endsWith(".pdf"));
     for (const file of pdfFiles) {
@@ -590,7 +590,7 @@ export default function Home() {
         folderNames = entries.filter((entry) => entry.name.toLowerCase().endsWith(".pdf")).map((entry) => entry.name);
       }
     }
-    return { names: [...new Set([...manualNames, ...folderNames])], folderPath };
+    return { names: [...folderNames, ...manualNames], folderPath };
   }
 
   async function detectRCMissing() {
@@ -604,7 +604,7 @@ export default function Home() {
     setRcSummary(null);
     try {
       const { names, folderPath } = await getRCPdfFileNames();
-      const { rooms, pdfFiles } = extractPdfRoomsFromFiles(names.map((name) => ({ name } as File)));
+      const { rooms, pdfFiles } = extractPdfRoomsFromFiles(names.map((name) => ({ name })));
       if (!pdfFiles) throw new Error("لم يتم العثور على ملفات PDF في مجلد الحجوزات المرتبط أو الملفات المحددة يدويًا.");
       const data = new FormData();
       if (reportExtension === "xml") {
