@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useFileLibrary } from "./file-library-provider";
 
-type FolderEntry = { path: string; relativePath: string; name: string; size: number };
+type FolderEntry = { path: string; relativePath: string; name: string; size: number; mtimeMs: number; rootPath?: string };
 type ArrivalGuest = { room: string; name: string; phone: string; email: string; source: string };
 type ExtractedRow = { file: string; room: string; name: string; phone: string; email: string; arrivalName: string; arrivalRoom: string; status: "matched" | "review" | "unmatched"; reason: string };
 
