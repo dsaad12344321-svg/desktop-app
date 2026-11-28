@@ -1841,6 +1841,11 @@ export default function GuestNameExtractorPage() {
   const [nativeFolderPath, setNativeFolderPath] = useState("");
   const [isDesktop, setIsDesktop] = useState(false);
   const [selected, setSelected] = useState<SearchResult | null>(null);
+  const [showCapitalizer, setShowCapitalizer] = useState(false);
+  const [capitalizerText, setCapitalizerText] = useState("");
+  const [capitalizerPosition, setCapitalizerPosition] = useState({ x: 24, y: 110 });
+  const capitalizerDrag = useRef<{ pointerId: number; offsetX: number; offsetY: number } | null>(null);
+
   const [msgPreview, setMsgPreview] = useState<MsgPreviewData | null>(null);
   const [msgPreviewError, setMsgPreviewError] = useState("");
   const [autoOpenMtsVoucher, setAutoOpenMtsVoucher] = useState(false);
@@ -2231,6 +2236,11 @@ export default function GuestNameExtractorPage() {
     }
   }
 
+
+  function openPreviewWithCapitalizer(item: SearchResult) {
+    setShowCapitalizer(true);
+    openPreview(item);
+  }
 
   function openPreview(item: SearchResult) {
     setSelected(item);
@@ -3066,7 +3076,7 @@ export default function GuestNameExtractorPage() {
                       <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [findAnexVoucherPage(card.file!, card.term, card.arrival?.name || "")] })}>معاينة صفحة الفاوتشر</button>
                     </> : <>
                       {isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(card.file!.path)}>مكان الملف</button>}
-                      <button type="button" className="add-button" onClick={() => openPreview({ ...card.file!, matchedPages: [1] })}>معاينة واستخراج</button>
+                      <button type="button" className="add-button" onClick={() => openPreviewWithCapitalizer({ ...card.file!, matchedPages: [1] })}>معاينة واستخراج</button>
                     </>}
                   </div>
                   <p className="folder-path" dir="ltr">{card.file.path}</p>
@@ -3113,7 +3123,7 @@ export default function GuestNameExtractorPage() {
                 <p className="muted">الصفحات المطابقة: {item.matchedPages.join(", ")}</p>
               </div><div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                 {isAnexIndexedFile(item) && item.extension.toLowerCase() === "pdf" ? <button type="button" className="add-button" onClick={() => void executeAnexVoucherPrint(item, String(findAnexVoucherPage(item, effectivePeopleQuery)))}>طباعة</button> : isDesktop && <button type="button" className="add-button" onClick={() => void window.desktopBridge?.showInFolder(item.path)}>مكان الملف</button>}
-                <button type="button" className="add-button" onClick={() => openPreview(item)}>معاينة واستخراج</button>
+                <button type="button" className="add-button" onClick={() => openPreviewWithCapitalizer(item)}>معاينة واستخراج</button>
               </div></div>
               <p className="folder-path" dir="ltr">{item.path}</p>
               {(() => {
@@ -3305,6 +3315,48 @@ export default function GuestNameExtractorPage() {
           </div>
         </section>
       </div>}
+
+
+      {showCapitalizer && <aside role="dialog" aria-label="تحويل أول حرف من كل كلمة إلى حرف كبير"
+        style={{ position: "fixed", left: capitalizerPosition.x, top: capitalizerPosition.y, zIndex: 1200,
+          width: "min(360px, calc(100vw - 24px))", padding: 12, border: "1px solid #9aaabd",
+          borderRadius: 12, background: "#fff", color: "#1e293b", boxShadow: "0 12px 36px rgba(15,23,42,.25)" }}>
+        <div onPointerDown={(event) => {
+          if ((event.target as HTMLElement).closest("button")) return;
+          const rect = event.currentTarget.parentElement!.getBoundingClientRect();
+          capitalizerDrag.current = { pointerId: event.pointerId, offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top };
+          event.currentTarget.setPointerCapture(event.pointerId);
+        }} onPointerMove={(event) => {
+          const drag = capitalizerDrag.current;
+          if (!drag || drag.pointerId !== event.pointerId) return;
+          setCapitalizerPosition({
+            x: Math.max(0, Math.min(window.innerWidth - 80, event.clientX - drag.offsetX)),
+            y: Math.max(0, Math.min(window.innerHeight - 80, event.clientY - drag.offsetY)),
+          });
+        }} onPointerUp={() => { capitalizerDrag.current = null; }}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, marginBottom: 10,
+            cursor: "move", userSelect: "none", touchAction: "none", fontWeight: 700 }}>
+          <span>Capitalize First Letter</span>
+          <button type="button" aria-label="إغلاق أداة تحويل الأحرف" onClick={() => setShowCapitalizer(false)}
+            style={{ border: 0, borderRadius: 6, background: "#eef2f7", padding: "4px 9px", cursor: "pointer" }}>×</button>
+        </div>
+        <textarea value={capitalizerText} onChange={(event) => setCapitalizerText(event.target.value)}
+          placeholder="اكتب أو الصق النص هنا..."
+          aria-label="النص المراد تحويله"
+          rows={3} style={{ display: "block", width: "100%", boxSizing: "border-box", resize: "vertical",
+            border: "1px solid #cbd5e1", borderRadius: 8, padding: 9, font: "inherit", direction: "auto" }} />
+        <div style={{ marginTop: 8, padding: 9, minHeight: 38, maxHeight: 120, overflow: "auto",
+          borderRadius: 8, background: "#f1f5f9", whiteSpace: "pre-wrap", overflowWrap: "anywhere", direction: "auto" }}>
+          {capitalizerText.replace(/[\p{L}\p{N}]+/gu, (word) => word.charAt(0).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase())}
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 7, marginTop: 9 }}>
+          <button type="button" className="add-button" onClick={() => setCapitalizerText("")}>مسح</button>
+          <button type="button" className="add-button" onClick={() => {
+            const converted = capitalizerText.replace(/[\p{L}\p{N}]+/gu, (word) => word.charAt(0).toLocaleUpperCase() + word.slice(1).toLocaleLowerCase());
+            void navigator.clipboard?.writeText(converted);
+          }}>نسخ النتيجة</button>
+        </div>
+      </aside>}
 
       {warnings.length > 0 && <section className="panel"><h2>ملفات تعذرت قراءتها</h2>
         <ul className="steps">{warnings.map((path) => <li key={path} dir="ltr">{path}</li>)}</ul></section>}
