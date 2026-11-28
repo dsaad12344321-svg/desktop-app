@@ -33,7 +33,7 @@ function roomsInFilename(name: string) {
 }
 
 export default function RCPreview() {
-  const { registrations, setFolderPath, readBytes } = useFileLibrary();
+  const { registrations, setFolderPath, refreshFolder, readBytes } = useFileLibrary();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SharedFolderEntry[]>([]);
   const [selected, setSelected] = useState<SharedFolderEntry | null>(null);
@@ -175,7 +175,7 @@ export default function RCPreview() {
         <button type="button" className="add-button" onClick={chooseFolder}>اختيار / تغيير مجلد النماذج</button>
         <p className="saved-hint">{registrations.path ? registrations.path : "لم يتم ربط مجلد نماذج التسجيل بعد."}</p>
         <p className="saved-hint">{registrations.loading ? "جارٍ فهرسة الملفات..." : "ملفات PDF في الفهرس: " + pdfEntries.length}</p>
-        <button type="button" className="add-button" disabled={registrations.loading || !registrations.path} onClick={() => void (async () => { try { await (await import("./file-library-provider")); window.location.reload(); } catch { setMessage("تعذر تحديث الفهرس."); } })()}>تحديث الفهرس</button>
+        <button type="button" className="add-button" disabled={registrations.loading || !registrations.path} onClick={() => void refreshFolder("registration").then(() => setMessage("تم تحديث فهرس ملفات PDF." )).catch(() => setMessage("تعذر تحديث الفهرس."))}>تحديث الفهرس</button>
       </div>
       <div className="uploads" style={{ marginTop: 16 }}>
         <label style={{ display: "grid", gap: 8, fontWeight: 700 }}>
