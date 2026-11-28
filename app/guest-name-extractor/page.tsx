@@ -1661,8 +1661,14 @@ function getMtsIndexedText(file: IndexedFile) {
   ].join("\n");
 }
 
-function isMtsVoucherAttachment(attachment: { name: string; pages: string[] }) {
+function isMtsGuestVoucherListFile(file: Pick<IndexedFile, "name" | "path" | "extension">) {
+  return file.extension.toLowerCase() === "msg"
+    && /guest\s*voucher(?:\s+list)?/i.test(file.name);
+}
+
+function isMtsVoucherAttachment(attachment: { name: string; pages: string[] }, parentName = "") {
   return /guest\s*voucher/i.test(attachment.name)
+    || (/guest\s*voucher(?:\s+list)?/i.test(parentName) && /\.pdf$/i.test(attachment.name))
     || attachment.pages.some((page) => /\bVoucher\s+Reference\s+No\.?\s*:/i.test(page)
       && /\bTravellers\s*:/i.test(page));
 }
@@ -1672,7 +1678,7 @@ function getMtsVoucherCandidates(files: IndexedFile[]) {
     const candidates: { file: IndexedFile; pages: string[]; pageNumbers: number[] }[] = [];
     if (file.extension.toLowerCase() === "msg") {
       for (const attachment of file.attachmentPages || []) {
-        if (isMtsVoucherAttachment(attachment)) {
+        if (isMtsVoucherAttachment(attachment, file.name)) {
           const indexedPages = attachment.pages
             .map((page, index) => ({ page, pageNumber: index + 1 }))
             .filter((entry) => entry.page.trim());
@@ -1779,7 +1785,9 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
         voucherPageNumber = matchingVoucherPage.matchedPageNumber;
         people = extractPeople(matchingVoucherPage.matchedPage, "", matchingVoucherPage.file.company, true, true);
       } else {
-        const attachedVoucher = (matchedMessage.attachmentPages || []).find(isMtsVoucherAttachment);
+        const attachedVoucher = (matchedMessage.attachmentPages || []).find((attachment) =>
+          isMtsVoucherAttachment(attachment, matchedMessage.name),
+        );
         const matchedPageIndex = attachedVoucher?.pages.findIndex((page) =>
           queryIsBookingNumber
             ? getMtsVoucherReference(page).replace(/-/g, "") === compact
@@ -1790,6 +1798,16 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
           voucherFile = matchedMessage;
           voucherPageNumber = matchedPageIndex + 1;
           people = extractPeople(matchedPage, "", matchedMessage.company, true, true);
+        } else {
+          // MTS may send Guest Voucher List as a separate Outlook MSG. Keep it
+          // available even when its embedded PDF is scanned and has no text.
+          const folderPath = matchedMessage.path.replace(/[\\/][^\\/]+$/, "").toLowerCase();
+          const separateVoucherMessage = files.find((candidate) =>
+            isMtsIndexedFile(candidate)
+            && isMtsGuestVoucherListFile(candidate)
+            && candidate.path.replace(/[\\/][^\\/]+$/, "").toLowerCase() === folderPath,
+          );
+          if (separateVoucherMessage) voucherFile = separateVoucherMessage;
         }
       }
     } else {
@@ -1965,7 +1983,12 @@ export default function GuestNameExtractorPage() {
 
   useEffect(() => {
     if (!autoOpenMtsVoucher || !selected || !isMtsIndexedFile(selected) || !msgPreview) return;
-    const voucher = msgPreview.attachments.find((attachment) => /guest\s*voucher/i.test(attachment.name) && (attachment.type === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf")));
+    const isGuestVoucherListMessage = isMtsGuestVoucherListFile(selected);
+    const isPdfAttachment = (attachment: MsgAttachmentPreview) =>
+      attachment.type === "application/pdf" || attachment.name.toLowerCase().endsWith(".pdf");
+    const voucher = msgPreview.attachments.find((attachment) =>
+      /guest\s*voucher/i.test(attachment.name) && isPdfAttachment(attachment),
+    ) || (isGuestVoucherListMessage ? msgPreview.attachments.find(isPdfAttachment) : undefined);
     setAutoOpenMtsVoucher(false);
     if (voucher) {
       setActiveAttachment(voucher);
@@ -2719,9 +2742,19 @@ export default function GuestNameExtractorPage() {
           const extracted = msgReader.getAttachment(row);
           const name = String(extracted.fileName || row.fileName || row.name || "");
           const declaredMime = String(row.attachMimeTag || "").split(";")[0].trim().toLowerCase();
-          if (!/guest\s*voucher/i.test(name)) continue;
-          if (!name.toLowerCase().endsWith(".pdf") && declaredMime !== "application/pdf") continue;
-          voucherBlob = new Blob([new Uint8Array(extracted.content).buffer as ArrayBuffer], { type: "application/pdf" });
+          const attachmentBytes = new Uint8Array(extracted.content);
+          const hasPdfSignature = attachmentBytes.length >= 5
+            && String.fromCharCode(...attachmentBytes.slice(0, 5)) === "%PDF-";
+          const isPdf = name.toLowerCase().endsWith(".pdf")
+            || declaredMime === "application/pdf"
+            || hasPdfSignature;
+          const isNamedVoucher = /guest\s*voucher/i.test(name);
+          const isVoucherListMessage = isMtsGuestVoucherListFile(item);
+          if (!isPdf || (!isNamedVoucher && !isVoucherListMessage)) continue;
+          voucherBlob = new Blob([attachmentBytes.buffer.slice(
+            attachmentBytes.byteOffset,
+            attachmentBytes.byteOffset + attachmentBytes.byteLength,
+          ) as ArrayBuffer], { type: "application/pdf" });
           break;
         }
       }
@@ -3154,7 +3187,7 @@ export default function GuestNameExtractorPage() {
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", margin: "8px 0" }}>
                     {isMtsIndexedFile(card.file) ? <>
                       {card.file.extension.toLowerCase() === "msg" && <button type="button" className="add-button" onClick={() => void openMtsOutlookFile(card.file!)}>فتح ملف Outlook</button>}
-                      <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...(card.voucherFile || card.file)!, matchedPages: [1] })}>استعراض الفاوتشر</button>
+                      <button type="button" className="add-button" onClick={() => openMtsVoucher({ ...(card.voucherFile || card.file)!, matchedPages: [card.voucherPageNumber || 1] })}>عرض Guest Voucher</button>
                       <button type="button" className="add-button" onClick={() => void printMtsVoucher((card.voucherFile || card.file)!, card.voucherPageNumber || 1)}>طباعة الفاوتشر</button>
                     </> : isFunSunIndexedFile(card.file) && card.file.extension.toLowerCase() === "pdf" ? <>
                       <button type="button" className="add-button" onClick={() => {
