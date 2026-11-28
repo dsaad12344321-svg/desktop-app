@@ -22,6 +22,22 @@ function nameOverlap(a: string, b: string) {
   aa.forEach((part) => { if (bb.has(part)) count++; });
   return count;
 }
+async function ocrImage(canvas: HTMLCanvasElement): Promise<string> {
+  const { createWorker } = await import("tesseract.js");
+  const worker = await createWorker("eng", 1, {
+    workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/worker.min.js",
+    corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@6.0.1",
+    langPath: "https://tessdata.projectnaptha.com/4.0.0",
+    logger: () => undefined,
+  });
+  try {
+    const result = await worker.recognize(canvas);
+    return result.data.text || "";
+  } finally {
+    await worker.terminate();
+  }
+}
+
 async function pdfText(data: Uint8Array) {
   const pdfjs = await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
@@ -38,7 +54,19 @@ async function pdfText(data: Uint8Array) {
       if (!row) { row = { y, cells: [] }; rows.push(row); }
       row.cells.push({ x: item.transform[4], text: item.str.trim() });
     }
-    pages.push(rows.sort((a,b) => b.y-a.y).map((row) => row.cells.sort((a,b) => a.x-b.x).map((cell) => cell.text).join(" ")).join("\n"));
+    let pageText = rows.sort((a,b) => b.y-a.y).map((row) => row.cells.sort((a,b) => a.x-b.x).map((cell) => cell.text).join(" ")).join("\n");
+    if (pageText.trim().length < 35) {
+      const viewport = page.getViewport({ scale: 2 });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      const context = canvas.getContext("2d");
+      if (context) {
+        await page.render({ canvasContext: context, viewport }).promise;
+        pageText = await ocrImage(canvas);
+      }
+    }
+    pages.push(pageText);
   }
   return pages.join("\n");
 }
