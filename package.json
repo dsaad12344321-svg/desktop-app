@@ -21,7 +21,8 @@
     "pdfjs-dist": "5.3.93",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "@kenjiuno/decompressrtf": "^0.1.4"
+    "@kenjiuno/decompressrtf": "^0.1.4",
+    "tesseract.js": "^6.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
