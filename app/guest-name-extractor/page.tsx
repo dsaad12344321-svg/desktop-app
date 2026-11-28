@@ -1771,7 +1771,14 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
         return priority(left) - priority(right);
       });
       file = prioritizedFunSunFiles[0] || prioritizedSunFiles[0] || sourceFiles[0] || null;
-      people = file ? extractPeopleForMultipleView(file, targetName, true) : [];
+      if (file) {
+        // When the booking number is the exact MSG/PDF filename, it identifies
+        // the document itself. Do not pass that numeric code as a guest-name
+        // filter; extract the complete guest list from the matched booking.
+        const fileCode = file.name.replace(/\.(?:msg|pdf)$/i, "").toLowerCase();
+        const queryIdentifiesFilename = fileCode === compact.toLowerCase();
+        people = extractPeopleForMultipleView(file, queryIdentifiesFilename ? "" : targetName, true);
+      }
     }
 
     // A booking code can point to a separate file for each reservation.
@@ -1783,7 +1790,9 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
       );
       if (referenceFiles.length) {
         return referenceFiles.map((referenceFile, fileIndex) => {
-          const extracted = extractPeopleForMultipleView(referenceFile, term, true);
+          const referenceCode = referenceFile.name.replace(/\.(?:msg|pdf)$/i, "").toLowerCase();
+          const queryIdentifiesFilename = referenceCode === compact.toLowerCase();
+          const extracted = extractPeopleForMultipleView(referenceFile, queryIdentifiesFilename ? "" : term, true);
           const unique = isW2mIndexedFile(referenceFile) || isSunInternationalIndexedFile(referenceFile)
             ? extracted
             : extracted.filter((person, personIndex, all) =>
