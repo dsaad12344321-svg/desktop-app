@@ -128,6 +128,8 @@ export default function RCDataExtractor() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [roomSearchInput, setRoomSearchInput] = useState("");
+  const [searchedRoom, setSearchedRoom] = useState("");
 
   useEffect(() => {
     let active = true;
@@ -247,7 +249,11 @@ export default function RCDataExtractor() {
     const link = document.createElement("a"); link.href = url; link.download = "rc-data-extractor.csv"; link.click(); URL.revokeObjectURL(url);
   }
 
-  const visibleRows = showAll ? rows : rows.filter((row) => row.status !== "matched");
+  const statusFilteredRows = showAll ? rows : rows.filter((row) => row.status !== "matched");
+  const normalizedSearchRoom = searchedRoom.replace(/\\D/g, "");
+  const visibleRows = normalizedSearchRoom
+    ? statusFilteredRows.filter((row) => [row.room, row.arrivalRoom].some((room) => String(room || "").replace(/\\D/g, "") === normalizedSearchRoom))
+    : statusFilteredRows;
   return <section className="panel">
     <h3>RC Data extractor</h3>
     <p className="muted">تقرأ الأداة نماذج التسجيل PDF من مجلد الحجوزات المرتبط، وتستخدم arr.pdf أو arr.xml لمراجعة أرقام الغرف وأسماء النزلاء. التطابق الجزئي لا يُعتمد تلقائيًا عند وجود أكثر من احتمال.</p>
@@ -272,9 +278,21 @@ export default function RCDataExtractor() {
         <div><strong>{rows.filter((row) => row.status === "unmatched").length}</strong><span>غير مطابق</span></div>
       </div>
       <div className="uploads">
+        <input
+          type="text"
+          inputMode="numeric"
+          value={roomSearchInput}
+          onChange={(event) => setRoomSearchInput(event.target.value)}
+          onKeyDown={(event) => { if (event.key === "Enter") setSearchedRoom(roomSearchInput.trim()); }}
+          placeholder="اكتب رقم الغرفة للبحث"
+          aria-label="رقم الغرفة للبحث"
+        />
+        <button type="button" className="add-button" onClick={() => setSearchedRoom(roomSearchInput.trim())}>بحث عن الغرفة</button>
+        {searchedRoom && <button type="button" className="add-button" onClick={() => { setRoomSearchInput(""); setSearchedRoom(""); }}>إلغاء البحث</button>}
         <button type="button" className="add-button" onClick={() => setShowAll((value) => !value)}>{showAll ? "عرض الحالات التي تحتاج مراجعة فقط" : "عرض جميع النماذج"}</button>
         <button type="button" className="add-button" onClick={downloadCsv}>تنزيل Excel CSV</button>
       </div>
+      {searchedRoom && <p className="muted">نتائج البحث عن الغرفة {searchedRoom}: {visibleRows.length} نتيجة</p>}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 850 }}>
           <thead><tr>{["ملف PDF","الغرفة","اسم النموذج","الهاتف","البريد","اسم الوصول المطابق","غرفة الوصول","الحالة"].map((heading) => <th key={heading} style={{ textAlign: "right", padding: 8, borderBottom: "1px solid #cbd5e1" }}>{heading}</th>)}</tr></thead>
