@@ -533,7 +533,7 @@ export default function Home() {
 
   function normalizeRCRoom(value: unknown) {
     const room = String(value ?? "").trim();
-    return /^\\d{3,4}$/.test(room) ? room.padStart(4, "0") : "";
+    return /^\d{3,4}$/.test(room) ? room.padStart(4, "0") : "";
   }
 
   async function extractRCRoomsFromArrivalPdf(file: File): Promise<string[]> {
@@ -554,19 +554,19 @@ export default function Home() {
         row.cells.push({ x: item.x, text: item.text });
       }
       const lines = rows.sort((a, b) => b.y - a.y).map((row) =>
-        row.cells.sort((a, b) => a.x - b.x).map((cell) => cell.text).join(" ").replace(/\\s+/g, " ").trim(),
+        row.cells.sort((a, b) => a.x - b.x).map((cell) => cell.text).join(" ").replace(/\s+/g, " ").trim(),
       );
       const isRoomLine = (line: string) => {
-        const match = line.match(/^(\\d{3,5})\\s+(.+)$/);
-        return Boolean(match && match[2].includes(",") && !/^\\d{5,9}\\b/.test(match[2]));
+        const match = line.match(/^(\d{3,5})\s+(.+)$/);
+        return Boolean(match && match[2].includes(",") && !/^\d{5,9}\b/.test(match[2]));
       };
       for (let index = 0; index < lines.length; index++) {
-        const match = lines[index].match(/^(\\d{3,5})\\s+(.+)$/);
+        const match = lines[index].match(/^(\d{3,5})\s+(.+)$/);
         if (!match || !match[2].includes(",")) continue;
         let confirmation = false;
         for (let next = index + 1; next < Math.min(index + 5, lines.length); next++) {
           if (isRoomLine(lines[next])) break;
-          if (/^\\s*\\d{5,9}(?=\\s|$)/.test(lines[next])) confirmation = true;
+          if (/^\s*\d{5,9}(?=\s|$)/.test(lines[next])) confirmation = true;
           if (confirmation) break;
         }
         if (confirmation) {
