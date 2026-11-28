@@ -1713,7 +1713,7 @@ function buildMultipleCards(searchQuery: string, files: IndexedFile[], arrivals:
   const voucherCandidates = getMtsVoucherCandidates(files);
   const searchableText = new Map(files.map((file) => [file.id, getMtsIndexedText(file)]));
 
-  return terms.flatMap((term, index) => {
+  return terms.flatMap<MultipleCard>((term, index) => {
     const compact = normalize(term).replace(/\s+/g, "");
 
     // Company searches return every booking file in the supplier folder.
