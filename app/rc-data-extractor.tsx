@@ -151,8 +151,8 @@ export default function RCDataExtractor() {
         const room = extractCardRoom(text);
         const filenameRooms = roomTokens(file.name);
         const roomCandidates = arrivalGuests.filter((guest) => {
-          const arrivalRoom = String(guest.room || "").replace(/\D/g, "").padStart(4, "0");
-          const cardRoom = String(room || "").replace(/\D/g, "").padStart(4, "0");
+          const arrivalRoom = String(guest.room || "").replace(/\\D/g, "").padStart(4, "0");
+          const cardRoom = String(room || "").replace(/\\D/g, "").padStart(4, "0");
           return (cardRoom && arrivalRoom && (cardRoom === arrivalRoom || cardRoom.includes(arrivalRoom.slice(-2)) || arrivalRoom.includes(cardRoom.slice(-2)))) ||
             filenameRooms.some((token) => token === arrivalRoom || token.includes(arrivalRoom.slice(-2)) || arrivalRoom.includes(token.slice(-2)));
         });
@@ -161,13 +161,14 @@ export default function RCDataExtractor() {
         const bestName = nameCandidates[0];
         const uniqueName = Boolean(bestName && (!nameCandidates[1] || bestName.score > nameCandidates[1].score));
         const roomGuest = roomCandidates.length === 1 ? roomCandidates[0] : null;
-        const candidate = roomGuest || (uniqueName ? bestName?.guest : null);
-        const hasRoomEvidence = Boolean(roomGuest || (filenameRooms.length && roomCandidates.length === 1));
-        const hasNameEvidence = Boolean(uniqueName && bestName && bestName.score >= 1);
+        const sameGuest = Boolean(roomGuest && uniqueName && bestName && roomGuest === bestName.guest);
+        const candidate = sameGuest ? roomGuest : roomGuest || (uniqueName ? bestName?.guest : null);
+        const hasRoomEvidence = Boolean(roomGuest);
+        const hasNameEvidence = Boolean(uniqueName && bestName);
         let status: ExtractedRow["status"] = "unmatched";
         let reason = "لم يتم العثور على تطابق موثوق في تقرير الوصول.";
-        if (candidate && hasRoomEvidence && hasNameEvidence) { status = "matched"; reason = "تطابق الغرفة والاسم مع تقرير الوصول."; }
-        else if (candidate || roomCandidates.length || nameCandidates.length) { status = "review"; reason = "يوجد تطابق جزئي؛ يرجى مراجعة رقم الغرفة والاسم يدويًا."; }
+        if (sameGuest) { status = "matched"; reason = "تطابق الغرفة والاسم مع سجل النزيل نفسه في تقرير الوصول."; }
+        else if (candidate || roomCandidates.length || nameCandidates.length) { status = "review"; reason = "يوجد تطابق جزئي أو أن الغرفة والاسم يشيران إلى سجلين مختلفين؛ يرجى المراجعة يدويًا."; }
         const phone = extractContact(text, "phone");
         const email = extractContact(text, "email");
         output.push({ file: file.name, room: room || filenameRooms[0] || "", name, phone, email, arrivalName: candidate?.name || bestName?.guest.name || "", arrivalRoom: candidate?.room || roomCandidates[0]?.room || "", status, reason });
