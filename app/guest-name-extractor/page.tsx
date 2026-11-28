@@ -2026,7 +2026,8 @@ export default function GuestNameExtractorPage() {
     if (arrivalCompanyFilter === "all") return true;
     const arrivalCompany = card.arrival ? arrivalCompanies.get(card.arrival.confirmationNo) : "";
     const company = arrivalCompany && arrivalCompany !== "غير محددة" ? arrivalCompany : card.file?.company || "غير محددة";
-    return company === arrivalCompanyFilter;
+    return company === arrivalCompanyFilter
+      || Boolean(card.file && isCompanyFolderMatch(card.file.company, arrivalCompanyFilter, files));
   }).sort((left, right) => {
     if (multipleSort === "company") {
       const companyCompare = (left.file?.company || "غير محددة").localeCompare(right.file?.company || "غير محددة", "ar", { sensitivity: "base" });
