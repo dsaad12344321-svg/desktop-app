@@ -109,6 +109,7 @@ function startLocalServer(port) {
 
 function registerSafeDesktopApi() {
   const savedFolderPathFile = path.join(app.getPath("userData"), "reservation-folder-path.txt");
+  const savedRCExtractorFolderPathFile = path.join(app.getPath("userData"), "rc-data-extractor-folder-path.txt");
 
   ipcMain.handle("desktop:get-saved-folder-path", async () => {
     try {
@@ -135,6 +136,27 @@ function registerSafeDesktopApi() {
     catch (error) { if (!error || error.code !== "ENOENT") throw error; }
     return true;
   });
+  ipcMain.handle("desktop:get-saved-rc-extractor-folder-path", async () => {
+    try {
+      const savedPath = (await fs.promises.readFile(savedRCExtractorFolderPathFile, "utf8")).trim();
+      if (!savedPath || !path.isAbsolute(savedPath)) return "";
+      const stat = await fs.promises.stat(savedPath);
+      return stat.isDirectory() ? savedPath : "";
+    } catch (error) {
+      if (error && (error.code === "ENOENT" || error.code === "ENOTDIR")) return "";
+      throw error;
+    }
+  });
+
+  ipcMain.handle("desktop:save-rc-extractor-folder-path", async (_event, selectedPath) => {
+    if (typeof selectedPath !== "string" || !path.isAbsolute(selectedPath)) throw new Error("Invalid RC extractor folder path.");
+    const stat = await fs.promises.stat(selectedPath);
+    if (!stat.isDirectory()) throw new Error("The selected RC extractor path is not a folder.");
+    await fs.promises.mkdir(path.dirname(savedRCExtractorFolderPathFile), { recursive: true });
+    await fs.promises.writeFile(savedRCExtractorFolderPathFile, path.resolve(selectedPath), "utf8");
+    return true;
+  });
+
   ipcMain.handle("desktop:get-app-info", () => ({
     name: app.getName(),
     version: app.getVersion(),
