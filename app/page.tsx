@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ChangeEvent } from "react";
 import GuestNameExtractorPage from "./guest-name-extractor/page";
+import RCDataExtractor from "./rc-data-extractor";
 
 type Exclusion = { id: number; code: string; count: number };
 type ManagerRow = { room: string; towel: string; nationality: boolean; profile: string; isHouseUse: boolean };
@@ -1117,6 +1118,9 @@ export default function Home() {
               {rcMissingRooms.length > 0 ? <textarea readOnly value={rcMissingRooms.join(",")} rows={5} aria-label="الغرف التي لا يوجد لها PDF" /> : <p className="saved-hint">ممتاز! جميع غرف تقرير الوصول لها ملفات PDF مطابقة.</p>}
             </div>
           )}
+          <div style={{ marginTop: 24, borderTop: "2px solid #e2e8f0", paddingTop: 20 }}>
+            <RCDataExtractor />
+          </div>
         </section>
       ) : (
         <section className="panel">
