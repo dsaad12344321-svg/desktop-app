@@ -26,7 +26,7 @@ async function ocrImage(canvas: HTMLCanvasElement): Promise<string> {
   const { createWorker } = await import("tesseract.js");
   const worker = await createWorker("eng", 1, {
     workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@6.0.1/dist/worker.min.js",
-    corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@6.0.1",
+    corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@6.1.2",
     langPath: "https://tessdata.projectnaptha.com/4.0.0",
     logger: () => undefined,
   });
