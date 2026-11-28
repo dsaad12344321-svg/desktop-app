@@ -3,6 +3,7 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import GuestNameExtractorPage from "./guest-name-extractor/page";
 import RCDataExtractor from "./rc-data-extractor";
+import { useFileLibrary } from "./file-library-provider";
 
 type Exclusion = { id: number; code: string; count: number };
 type ManagerRow = { room: string; towel: string; nationality: boolean; profile: string; isHouseUse: boolean };
@@ -15,6 +16,7 @@ const ACTIVE_TOOL_STORAGE_KEY = "nationality-report-active-tool-v1";
 const COUNTRIES = [["ES","إسبانيا"],["DE","ألمانيا"],["GB","بريطانيا"],["US","الولايات المتحدة"],["UA","أوكرانيا"],["RU","روسيا"],["BE","بلجيكا"],["PL","بولندا"],["CN","الصين"],["FR","فرنسا"],["IT","إيطاليا"],["IN","الهند"],["JP","اليابان"],["HR","كرواتيا"],["PK","باكستان"],["IR","إيران"],["IL","إسرائيل"],["SA","السعودية"],["IQ","العراق"],["LY","ليبيا"],["SD","السودان"],["PS","فلسطين"],["JO","الأردن"],["MA","المغرب"],["DZ","الجزائر"],["TN","تونس"],["MR","موريتانيا"],["BH","البحرين"],["EG","مصر"],["AE","الإمارات"],["KW","الكويت"],["QA","قطر"],["OM","عُمان"],["YE","اليمن"],["SY","سوريا"],["LB","لبنان"],["NL","هولندا"],["AT","النمسا"],["CH","سويسرا"],["SE","السويد"],["NO","النرويج"],["DK","الدنمارك"],["FI","فنلندا"],["CZ","التشيك"],["SK","سلوفاكيا"],["HU","المجر"],["RO","رومانيا"],["BG","بلغاريا"],["GR","اليونان"],["TR","تركيا"],["CA","كندا"],["AU","أستراليا"],["BR","البرازيل"],["MX","المكسيك"],["ZA","جنوب أفريقيا"]] as const;
 
 export default function Home() {
+  const { reservations: sharedReservations, registrations: sharedRegistrations, refreshFolder: refreshSharedFolder } = useFileLibrary();
   const [natFile, setNatFile] = useState<File | null>(null);
   const [manFile, setManFile] = useState<File | null>(null);
   const [roomInhFile, setRoomInhFile] = useState<File | null>(null);
@@ -713,6 +715,17 @@ export default function Home() {
         <h1>{activeTool === "nationality" ? "التقرير اليومي للجنسيات" : activeTool === "towels" ? "Missing Towel Detector" : activeTool === "nationality-missing" ? "Nationality missing detector" : activeTool === "missing-profile" ? "Missing Profile Detector" : activeTool === "manager-report" ? "Manager Report" : activeTool === "guest-name-extractor" ? "Guest Name Extractor" : activeTool === "rc-missing" ? "RC Missing" : "Journal Detector"}</h1>
         <p>{activeTool === "nationality" ? "حوّل ملفات nat.xml وman.xml إلى تقرير Excel، ويمكن إضافة Guests INH - By Room لإنشاء تبويب تفاصيل الغرف." : activeTool === "towels" ? "ارفع تقرير الغرف لاستخراج أرقام الغرف التي لا تحتوي على Towel Card." : activeTool === "nationality-missing" ? "ارفع Guest INH By Nationality لاستخراج أرقام الغرف التي لا تحتوي على كود جنسية." : activeTool === "missing-profile" ? "قارن عدد Adults + Children بعدد الأسماء المسجلة في Main Profile وAccompanying Names." : activeTool === "manager-report" ? "تقرير موحد للغرف التي بها نقص في كروت الفوط أو الجنسية أو ملفات النزلاء." : activeTool === "guest-name-extractor" ? "اختر مجلد الحجوزات للبحث داخل ملفات PDF وWord وOutlook عن اسم النزيل أو الشركة." : activeTool === "rc-missing" ? "قارن غرف تقرير RES_DETAIL مع أرقام الغرف الموجودة في أسماء ملفات PDF داخل ملف ZIP، واعرض الغرف التي لا يوجد لها PDF." : "ارفع Journal by Cashier and Transaction Code لاستخراج الحركات، أو RES_DETAIL لاستخراج غرف الوصول التي لديها 1012 Fixed Charges."}</p>
       </header>
+
+      <section className="panel" aria-live="polite" style={{ padding: "12px 16px", marginBottom: 16 }}>
+        <strong>مكتبة الملفات المشتركة</strong>
+        <div className="uploads" style={{ marginTop: 8, alignItems: "center" }}>
+          <span>الحجوزات: {sharedReservations.loading ? "جارٍ الفحص..." : sharedReservations.path ? sharedReservations.entries.length + " ملف" : "غير مرتبط"}</span>
+          <span>نماذج التسجيل: {sharedRegistrations.loading ? "جارٍ الفحص..." : sharedRegistrations.path ? sharedRegistrations.entries.length + " ملف" : "غير مرتبط"}</span>
+          <button type="button" className="add-button" disabled={sharedReservations.loading || sharedRegistrations.loading} onClick={() => { void Promise.all([refreshSharedFolder("reservations"), refreshSharedFolder("registration")]); }}>تحديث فهرس المجلدين</button>
+        </div>
+        {(sharedReservations.error || sharedRegistrations.error) && <p className="saved-hint">{[sharedReservations.error, sharedRegistrations.error].filter(Boolean).join(" — ")}</p>}
+        <p className="saved-hint">يتم فحص المجلدين بالتوازي عند بدء التطبيق. يمكن للأدوات استخدام الملفات المشتركة مباشرة من المجلد الأصلي، وتُقرأ محتويات الملفات عند الحاجة دون رفعها مجددًا.</p>
+      </section>
 
       <section className="panel tool-picker">
         <label htmlFor="tool-select">اختر الأداة</label>
