@@ -83,15 +83,25 @@ async function readCrop(worker: OcrWorker, source: HTMLCanvasElement, rect: Crop
   const sx=source.width/1024, sy=source.height/1444;
   const x=Math.max(0,Math.round(rect.x*sx)), y=Math.max(0,Math.round(rect.y*sy));
   const width=Math.min(source.width-x,Math.round(rect.width*sx)), height=Math.min(source.height-y,Math.round(rect.height*sy));
-  const crop=document.createElement("canvas"); crop.width=Math.max(1,width*2); crop.height=Math.max(1,height*2);
-  const ctx=crop.getContext("2d");
-  if(ctx){ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";ctx.drawImage(source,x,y,width,height,0,0,crop.width,crop.height);}
+  const crop=document.createElement("canvas"); crop.width=Math.max(1,width*3); crop.height=Math.max(1,height*3);
+  const ctx=crop.getContext("2d",{willReadFrequently:true});
+  if(ctx){
+    ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
+    ctx.drawImage(source,x,y,width,height,0,0,crop.width,crop.height);
+    const image=ctx.getImageData(0,0,crop.width,crop.height);
+    for(let i=0;i<image.data.length;i+=4){
+      const luminance=0.299*image.data[i]+0.587*image.data[i+1]+0.114*image.data[i+2];
+      const value=luminance<205?0:255;
+      image.data[i]=value;image.data[i+1]=value;image.data[i+2]=value;
+    }
+    ctx.putImageData(image,0,0);
+  }
   const result=await worker.recognize(crop);
   const value=(result.data.text||"").replace(/[|_~]/g," ").replace(/\s+/g," ").trim();
   const confidence=Math.max(0,Math.min(100,Number(result.data.confidence||0)));
   return {value,confidence,status:value?(confidence>=62?"likely":"review"):"missing"};
 }
-async function extractRegistrationPages(data: Uint8Array): Promise<RegistrationPage[]> {
+async function extractRegistrationPages(data: Uint8Array, fallbackRoom = ""): Promise<RegistrationPage[]> {
   const pdfjs=await import("pdfjs-dist");
   pdfjs.GlobalWorkerOptions.workerSrc=new URL("pdfjs-dist/build/pdf.worker.min.mjs",import.meta.url).toString();
   const pdf=await pdfjs.getDocument({data}).promise;
@@ -109,12 +119,21 @@ async function extractRegistrationPages(data: Uint8Array): Promise<RegistrationP
       const context=canvas.getContext("2d");if(!context)continue;
       await page.render({canvasContext:context,viewport}).promise;
       const field=(rect:CropRect)=>readCrop(worker,canvas,rect);
-      const [arrivalDate,departureDate,persons,room]=await Promise.all([
-        field({x:52,y:230,width:175,height:34}),field({x:230,y:230,width:164,height:34}),
-        field({x:397,y:230,width:153,height:34}),field({x:553,y:230,width:260,height:34})
+      // Registration Card layout: handwritten values sit above the printed guest-row labels.
+      const [arrivalDate,departureDate,persons,detectedRoom]=await Promise.all([
+        field({x:58,y:211,width:170,height:29}),field({x:239,y:211,width:160,height:29}),
+        field({x:408,y:211,width:145,height:29}),field({x:570,y:211,width:245,height:29})
       ]);
+      const room = /\\d{3,4}/.test(detectedRoom.value)
+        ? detectedRoom
+        : fallbackRoom
+          ? {value:fallbackRoom,confidence:100,status:"likely" as const}
+          : detectedRoom;
+      const parsedPersons=Number((persons.value.match(/\\d{1,2}/)||[])[0]||0);
+      const guestRowPositions=[284,329,374,419,464];
+      const rowsToRead=parsedPersons>=1&&parsedPersons<=5?guestRowPositions.slice(0,parsedPersons):guestRowPositions;
       const guests:RegistrationGuest[]=[];
-      for(const y of [284,329,374,419,464]){
+      for(const y of rowsToRead){
         const [familyName,firstName,birthDate,passport,nationality]=await Promise.all([
           field({x:82,y,width:146,height:38}),field({x:232,y,width:161,height:38}),
           field({x:398,y,width:151,height:38}),field({x:554,y,width:258,height:38}),
@@ -123,9 +142,10 @@ async function extractRegistrationPages(data: Uint8Array): Promise<RegistrationP
         if([familyName,firstName,birthDate,passport,nationality].some(v=>v.value.length>1))
           guests.push({familyName,firstName,birthDate,passport,nationality});
       }
+      // Telephone, address and profession share one row; email occupies the full row beneath.
       const [email,telephone,address,profession]=await Promise.all([
-        field({x:52,y:550,width:341,height:31}),field({x:398,y:550,width:151,height:31}),
-        field({x:554,y:550,width:258,height:31}),field({x:817,y:550,width:155,height:31})
+        field({x:62,y:548,width:920,height:34}),field({x:405,y:520,width:184,height:27}),
+        field({x:592,y:520,width:224,height:27}),field({x:819,y:520,width:180,height:27})
       ]);
       pages.push({page:pageNo,arrivalDate,departureDate,persons,room,guests,email,telephone,address,profession});
     }
@@ -267,8 +287,8 @@ export default function RCDataExtractor() {
       const output: ExtractedRow[] = [];
       for (const file of selected) {
         if (/^arr\.pdf$/i.test(file.name)) continue;
-        const pages = await extractRegistrationPages(file.data);
         const filenameRooms = roomTokens(file.name);
+        const pages = await extractRegistrationPages(file.data, filenameRooms[0] || "");
         const cardRoom = pages.map(page => page.room.value.replace(/\D/g,"")).find(Boolean) || "";
         const room = cardRoom || filenameRooms[0] || "";
         const normalizedCardRoom = room.replace(/\D/g,"").padStart(4,"0");
@@ -364,7 +384,7 @@ export default function RCDataExtractor() {
                 <h4>بيانات الإقامة والتواصل — الصفحة {page.page}</h4>
                 <div style={{overflowX:"auto"}}><table style={{width:"100%",borderCollapse:"collapse",minWidth:560}}>
                   <thead><tr><th style={{textAlign:"right",padding:8}}>الحقل</th><th style={{textAlign:"right",padding:8}}>البيانات المستخرجة</th><th style={{textAlign:"right",padding:8}}>التقييم</th></tr></thead>
-                  <tbody>{([["رقم الغرفة",page.room],["الوصول",page.arrivalDate],["المغادرة",page.departureDate],["عدد الأشخاص",page.persons],["الهاتف",page.telephone],["البريد الإلكتروني",page.email],["العنوان",page.address],["المهنة",page.profession]] as Array<[string,FieldResult]>).map(([label,item])=><tr key={label}><td style={{padding:8,borderBottom:"1px solid #e2e8f0"}}>{label}</td><td style={{padding:8,borderBottom:"1px solid #e2e8f0"}}>{fieldValue(item)}</td><td style={{padding:8,borderBottom:"1px solid #e2e8f0"}}>{fieldStatusLabel(item)}{item.value?" ("+Math.round(item.confidence)+"%)":""}</td></tr>)}</tbody>
+                  <tbody>{([["الفندق",{value:"Long Beach Resort",status:"likely",confidence:100}],["رقم الغرفة",page.room],["الوصول",page.arrivalDate],["المغادرة",page.departureDate],["عدد الأشخاص",page.persons],["الهاتف",page.telephone],["البريد الإلكتروني",page.email],["العنوان",page.address],["المهنة",page.profession]] as Array<[string,FieldResult]>).map(([label,item])=><tr key={label}><td style={{padding:8,borderBottom:"1px solid #e2e8f0"}}>{label}</td><td style={{padding:8,borderBottom:"1px solid #e2e8f0"}}>{fieldValue(item)}</td><td style={{padding:8,borderBottom:"1px solid #e2e8f0"}}>{fieldStatusLabel(item)}{item.value?" ("+Math.round(item.confidence)+"%)":""}</td></tr>)}</tbody>
                 </table></div>
                 <h4 style={{marginTop:18}}>بيانات النزيل ({page.guests.length})</h4>
                 {!page.guests.length?<p className="muted">لم يتم التعرف على بيانات نزلاء في هذه الصفحة.</p>:page.guests.map((guest,guestIndex)=>(
